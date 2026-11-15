@@ -71,6 +71,12 @@ class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/auth/kakao/start", "/api/auth/kakao/callback").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/me").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/rooms/*/places/search",
+                                "/api/rooms/*/place-submission/categories").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/rooms/*/place-submission",
+                                "/api/rooms/*/place-submission/extension").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/rooms/*/place-submission/me/*",
+                                "/api/rooms/*/place-submission/closure").authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint((request, response, failure) -> unauthenticated(response))
