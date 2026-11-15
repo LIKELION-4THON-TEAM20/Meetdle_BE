@@ -2,6 +2,7 @@ package com.likelion4thon.Meetdle.venue;
 
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.VenueStateReader.Category;
+import com.likelion4thon.Meetdle.contract.VenueStateReader.Draft;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.CacheControl;
@@ -16,9 +17,33 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 @RequestMapping("/api/rooms/{roomId}")
 class PlaceRegistrationController {
     private final PlaceRegistration registration;
+    private final PlaceVoting voting;
 
-    PlaceRegistrationController(PlaceRegistration registration) {
+    PlaceRegistrationController(PlaceRegistration registration, PlaceVoting voting) {
         this.registration = registration;
+        this.voting = voting;
+    }
+
+    @PostMapping("/voting")
+    ResponseEntity<Void> startVoting(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestHeader("Idempotency-Key") UUID key, @RequestBody PlaceVoting.Start request) {
+        voting.start(roomId, user.userId(), key, request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/preferences/me")
+    ResponseEntity<Draft> savePreferences(
+            @PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestBody PlaceVoting.Edit request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(voting.save(roomId, user.userId(), request));
+    }
+
+    @PutMapping("/vote-submissions/me")
+    ResponseEntity<Void> submitVote(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestBody PlaceVoting.Submit request) {
+        voting.submit(roomId, user.userId(), request);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/place-submission")
@@ -76,10 +101,10 @@ class PlaceRegistrationController {
     ResponseEntity<Map<String, String>> venueError(VenueException failure) {
         return ResponseEntity.status(failure.status).body(Map.of("code", failure.getMessage(), "message",
                 switch (failure.status) {
-                    case 400 -> "Invalid place registration request";
+                    case 400 -> "Invalid venue request";
                     case 403 -> "Access denied";
-                    case 503 -> "Place registration service unavailable";
-                    default -> "Request conflicts with the current place registration state";
+                    case 503 -> "Venue service unavailable";
+                    default -> "Request conflicts with the current venue state";
                 }));
     }
 

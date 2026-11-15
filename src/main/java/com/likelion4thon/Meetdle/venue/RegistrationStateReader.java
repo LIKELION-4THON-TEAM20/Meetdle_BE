@@ -12,9 +12,11 @@ import static com.likelion4thon.Meetdle.contract.RoomPhase.*;
 @Component
 class RegistrationStateReader implements VenueStateReader {
     private final RegistrationStore store;
+    private final PlaceVoting voting;
 
-    RegistrationStateReader(RegistrationStore store) {
+    RegistrationStateReader(RegistrationStore store, PlaceVoting voting) {
         this.store = store;
+        this.voting = voting;
     }
 
     @Override
@@ -34,6 +36,20 @@ class RegistrationStateReader implements VenueStateReader {
         if (context.phase() == FINAL_PLACE_CONFIRMED) {
             var result = store.latest(context.roomId()).flatMap(store::automaticResult).orElse(null);
             return new VenueState(null, null, null, null, result, null, actions);
+        }
+        if (context.phase() == VOTING_OPEN) {
+            return store.latest(context.roomId()).map(round -> {
+                var ballot = voting.project(round, context.viewer().participantId());
+                var draft = ballot.myDraft();
+                if (draft != null && !draft.submitted() && context.now().isBefore(ballot.closesAt())) {
+                    actions.add(Action.EDIT_PREFERENCES);
+                    if (draft.selections().size() == ballot.candidates().stream()
+                            .filter(candidate -> candidate.mode() == BallotMode.VOTE).count()) {
+                        actions.add(Action.SUBMIT_VOTE);
+                    }
+                }
+                return new VenueState(null, ballot, null, null, null, null, actions);
+            }).orElseGet(() -> state(null, actions));
         }
         if (context.phase() != PLACE_SUBMISSION_OPEN && context.phase() != PLACE_SUBMISSION_CLOSED) {
             return state(null, actions);

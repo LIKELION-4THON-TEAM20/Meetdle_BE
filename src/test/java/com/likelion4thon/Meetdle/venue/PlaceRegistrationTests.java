@@ -184,6 +184,69 @@ class PlaceRegistrationTests {
         assertEquals(List.of(Category.FOOD), result.selected().stream().map(place -> place.place().category()).toList());
         assertEquals(List.of(result.selected().get(0).candidateId()), result.visitOrder());
         assertNull(result.selected().get(0).aggregate());
+
+        verifyVoting(host, member, meeting.selectionId());
+    }
+
+    private void verifyVoting(Session host, Session member, UUID selectionId) throws Exception {
+        String room = ROOM_ID.toString();
+        jdbc.update("UPDATE room SET phase = 'PLACE_SUBMISSION_CLOSED' WHERE room_id = ?", room);
+        jdbc.update("""
+                INSERT INTO venue_round (room_id, round_no, selection_id, collection_closes_at, collection_closed_at)
+                VALUES (?, 2, ?, '2030-01-01 02:15:00', '2030-01-01 02:15:00')
+                """, room, selectionId.toString());
+        jdbc.update("""
+                INSERT INTO round_member (room_id, round_no, participant_id)
+                SELECT room_id, 2, participant_id FROM room_member WHERE room_id = ?
+                """, room);
+        jdbc.update("""
+                INSERT INTO round_category (room_id, round_no, category, required, available, radius_meters)
+                VALUES (?, 2, 'FOOD', TRUE, TRUE, 2500), (?, 2, 'CAFE', FALSE, TRUE, 2500)
+                """, room, room);
+        UUID auto = UUID.randomUUID();
+        UUID competitive = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO place_candidate (room_id, round_no, candidate_id, category, provider_place_id,
+                    name, address, lat, lng)
+                VALUES (?, 2, ?, 'FOOD', '1', 'Food', 'Address', 37, 127),
+                       (?, 2, ?, 'CAFE', '2', 'Cafe', 'Address', 37, 127)
+                """, room, auto.toString(), room, competitive.toString());
+        now = Instant.parse("2030-01-01T02:15:00Z");
+        Instant deadline = now.plusSeconds(1800);
+        String start = """
+                {"round":2,"closesAt":"%s"}
+                """.formatted(deadline);
+        UUID key = UUID.randomUUID();
+        postCommand(ROOT + "/voting", member, key, start, 403);
+        postCommand(ROOT + "/voting", host, key, start, 204);
+        postCommand(ROOT + "/voting", host, key, start, 204);
+        assertEquals(VOTING_OPEN, phase());
+        assertEquals(2, voteState(HOST.userId()).candidates().size());
+
+        String preferences = ROOT + "/preferences/me";
+        String submissions = ROOT + "/vote-submissions/me";
+        String edit = """
+                {"round":2,"draftRevision":0,"selections":[{"candidateId":"%s","choice":"LIKE"}]}
+                """;
+        putCommand(submissions, host, "{\"round\":2,\"draftRevision\":0}", 409);
+        putCommand(preferences, host, edit.formatted(auto), 400);
+        putCommand(preferences, host, edit.formatted(competitive), 200);
+        putCommand(preferences, host, edit.formatted(competitive), 409);
+        assertEquals(List.of(), voteState(MEMBER).myDraft().selections());
+
+        String submit = "{\"round\":2,\"draftRevision\":1}";
+        putCommand(submissions, host, submit, 204);
+        putCommand(submissions, host, submit, 204);
+        putCommand(preferences, host, edit.formatted(competitive), 409);
+        assertEquals(List.of(HOST_PARTICIPANT), voteState(MEMBER).completedParticipantIds());
+        now = deadline;
+        putCommand(preferences, member, edit.formatted(competitive), 409);
+        putCommand(submissions, member, "{\"round\":2,\"draftRevision\":0}", 409);
+    }
+
+    private VenueStateReader.Voting voteState(UUID user) {
+        return reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(user), phase(),
+                confirmedVenueRoom().selectedMeeting().map(meeting -> meeting.meetingAt()), now)).voting();
     }
 
     private RoomPhase phase() {

@@ -396,7 +396,7 @@ class PlaceRegistration {
         throw new VenueException(400, "INVALID_REQUEST");
     }
 
-    private RoomVenueAccess access() {
+    RoomVenueAccess access() {
         RoomVenueAccess access = rooms.getIfAvailable();
         if (access == null) {
             throw new VenueException(503, "ROOM_WORKFLOW_UNAVAILABLE");
@@ -408,7 +408,7 @@ class PlaceRegistration {
         return store.latest(room).orElseThrow(() -> conflict("WRONG_PHASE"));
     }
 
-    private Round current(RoomVenueSnapshot snapshot, int requested) {
+    Round current(RoomVenueSnapshot snapshot, int requested) {
         if (requested < 1) {
             throw new VenueException(400, "INVALID_REQUEST");
         }
@@ -419,13 +419,13 @@ class PlaceRegistration {
         return round;
     }
 
-    private static void host(RoomVenueSnapshot snapshot) {
+    static void host(RoomVenueSnapshot snapshot) {
         if (snapshot.actorMember().filter(member -> member.role() == Role.HOST).isEmpty()) {
             throw new VenueException(403, "FORBIDDEN");
         }
     }
 
-    private UUID participant(RoomVenueSnapshot snapshot, Round round) {
+    UUID participant(RoomVenueSnapshot snapshot, Round round) {
         return snapshot.actorMember().map(member -> member.participantId())
                 .filter(id -> store.eligible(round, id)).orElseThrow(() -> new VenueException(403, "FORBIDDEN"));
     }
@@ -435,7 +435,7 @@ class PlaceRegistration {
                 .findFirst().orElseThrow(() -> conflict("CATEGORY_DISABLED"));
     }
 
-    private static SelectedMeeting meeting(RoomVenueSnapshot snapshot) {
+    static SelectedMeeting meeting(RoomVenueSnapshot snapshot) {
         return snapshot.selectedMeeting().orElseThrow(() -> conflict("WRONG_PHASE"));
     }
 
@@ -448,11 +448,11 @@ class PlaceRegistration {
         }
     }
 
-    private static VenueException conflict(String code) {
+    static VenueException conflict(String code) {
         return new VenueException(409, code);
     }
 
-    private CommandKey commandKey(UUID room, UUID user, UUID key, String suffix, Object request) {
+    CommandKey commandKey(UUID room, UUID user, UUID key, String suffix, Object request) {
         try {
             return new CommandKey(user.toString(), "/api/rooms/" + room + suffix, key.toString(),
                     MessageDigest.getInstance("SHA-256").digest(json.writeValueAsBytes(request)));
@@ -474,7 +474,7 @@ class PlaceRegistration {
     }
 
     // Both command paths include the room in their key and save success under the room write lock.
-    private <T> T deduplicate(RoomVenueSnapshot snapshot, CommandKey key, int status,
+    <T> T deduplicate(RoomVenueSnapshot snapshot, CommandKey key, int status,
                               Class<T> type, Supplier<T> command) {
         var prior = saved(key, snapshot.now());
         if (prior.isPresent()) {
@@ -491,7 +491,7 @@ class PlaceRegistration {
         return result;
     }
 
-    private record CommandKey(String user, String path, String id, byte[] hash) {}
+    record CommandKey(String user, String path, String id, byte[] hash) {}
     enum ExtensionMode { MINI_TIMER, EXTEND }
     record Open(UUID selectionId, List<Category> requiredCategories, Instant closesAt) {}
     record Opened(int round, List<CategorySetting> categories, Instant closesAt) {}

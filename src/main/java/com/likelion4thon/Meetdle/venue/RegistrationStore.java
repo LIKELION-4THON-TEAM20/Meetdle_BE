@@ -27,11 +27,13 @@ class RegistrationStore {
 
     Optional<Round> latest(UUID room) {
         return jdbc.query("""
-                SELECT round_no, collection_closes_at, collection_closed_at, collection_extended_at, mini_timer_used_at FROM venue_round
+                SELECT round_no, collection_closes_at, collection_closed_at, collection_extended_at,
+                    mini_timer_used_at, vote_closes_at FROM venue_round
                 WHERE room_id = ? ORDER BY round_no DESC LIMIT 1
                 """, (rs, row) -> new Round(room.toString(), rs.getInt("round_no"),
                 instant(rs, "collection_closes_at"), instant(rs, "collection_closed_at"),
-                instant(rs, "collection_extended_at") != null, instant(rs, "mini_timer_used_at") != null), room.toString()).stream().findFirst();
+                instant(rs, "collection_extended_at") != null, instant(rs, "mini_timer_used_at") != null,
+                instant(rs, "vote_closes_at")), room.toString()).stream().findFirst();
     }
 
     List<CategorySetting> categories(Round round) {
@@ -204,7 +206,7 @@ class RegistrationStore {
         return id;
     }
 
-    private static Place place(ResultSet rs) throws SQLException {
+    static Place place(ResultSet rs) throws SQLException {
         String url = rs.getString("detail_url");
         return new Place(rs.getString("name"), rs.getString("address"), rs.getDouble("lat"),
                 rs.getDouble("lng"), Category.valueOf(rs.getString("category")), url == null ? null : URI.create(url));
@@ -219,5 +221,6 @@ class RegistrationStore {
         return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
-    record Round(String room, int number, Instant closesAt, Instant closedAt, boolean extended, boolean miniTimerUsed) {}
+    record Round(String room, int number, Instant closesAt, Instant closedAt, boolean extended,
+                 boolean miniTimerUsed, Instant voteClosesAt) {}
 }

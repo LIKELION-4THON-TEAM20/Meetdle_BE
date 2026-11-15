@@ -74,9 +74,10 @@ class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/rooms/*/places/search",
                                 "/api/rooms/*/place-submission/categories").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/rooms/*/place-submission",
-                                "/api/rooms/*/place-submission/extension").authenticated()
+                                "/api/rooms/*/place-submission/extension", "/api/rooms/*/voting").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/rooms/*/place-submission/me/*",
-                                "/api/rooms/*/place-submission/closure").authenticated()
+                                "/api/rooms/*/place-submission/closure", "/api/rooms/*/preferences/me",
+                                "/api/rooms/*/vote-submissions/me").authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint((request, response, failure) -> unauthenticated(response))
