@@ -36,13 +36,14 @@ public interface RoomVenueAccess {
         RoomVenueSnapshot snapshot();
     }
 
+    /** Member IDs include everyone who joined, regardless of recommendation input. */
     record RoomVenueSnapshot(
             UUID roomId,
             RoomPhase phase,
             long revision,
             int capacity,
             Optional<RoomMember> actorMember,
-            Set<UUID> decisionParticipantIds,
+            Set<UUID> memberParticipantIds,
             Optional<SelectedMeeting> selectedMeeting,
             Instant now
     ) {
@@ -50,7 +51,7 @@ public interface RoomVenueAccess {
             Objects.requireNonNull(roomId, "roomId");
             Objects.requireNonNull(phase, "phase");
             Objects.requireNonNull(actorMember, "actorMember");
-            decisionParticipantIds = Set.copyOf(decisionParticipantIds);
+            memberParticipantIds = Set.copyOf(memberParticipantIds);
             Objects.requireNonNull(selectedMeeting, "selectedMeeting");
             Objects.requireNonNull(now, "now");
         }

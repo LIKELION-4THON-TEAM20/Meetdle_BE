@@ -19,6 +19,6 @@ class MeetingWindowTests {
         assertEquals(Duration.ofMinutes(30), shortened.registrationMinimum());
         assertEquals(Duration.ofMinutes(30), normal.votingMinimum());
         assertEquals(Instant.parse("2030-01-02T06:00:00Z"), normal.votingCutoff());
-        assertEquals(Instant.parse("2030-01-02T05:29:00Z"), normal.registrationCutoff());
+        assertEquals(Instant.parse("2030-01-02T05:30:00Z"), normal.registrationCutoff());
     }
 }

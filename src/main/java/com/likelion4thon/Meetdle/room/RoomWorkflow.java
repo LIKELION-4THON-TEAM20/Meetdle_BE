@@ -4,6 +4,7 @@ import com.likelion4thon.Meetdle.contract.RoomMember;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.contract.RoomVenueAccess.Actor;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -12,17 +13,21 @@ import java.util.UUID;
 
 /** Room operations used by planning and the room-to-venue adapter. */
 public interface RoomWorkflow {
-    /** Checks host access and returns one consistent input version. */
-    PlanningInputs readPlanningInputs(UUID roomId, UUID hostUserId);
-
     /** Locks the room row in the caller's active write transaction. */
     LockedRoom lockForWrite(UUID roomId, Actor actor);
 
-    MemberInput saveMemberInput(LockedRoom context, long expectedInputRevision, InputValues values);
+    /**
+     * Closes joining and captures the completed inputs for a host request matching the expected
+     * input version. At least two completed inputs are required.
+     */
+    PlanningInputSnapshot beginPlanning(LockedRoom context, long expectedInputVersion);
 
-    Set<UUID> freezeDecisionRoster(LockedRoom context, long expectedInputVersion, Set<UUID> participantIds);
+    /** Loads only the completed inputs frozen by the initial planning request. */
+    List<MemberInput> readCompletedInputs(UUID roomId, Set<UUID> participantIds);
 
-    /** Advances the room revision after a successful mutation. */
+    MemberInput saveMemberInput(LockedRoom context, long expectedInputRevision, InputValues values, boolean complete);
+
+    /** Advances the room revision and closes input editing when the first meeting is confirmed. */
     void recordChange(LockedRoom context, RoomPhase nextPhase);
 
     interface LockedRoom {
@@ -36,20 +41,20 @@ public interface RoomWorkflow {
             long inputVersion,
             int capacity,
             Optional<RoomMember> actorMember,
-            Set<UUID> decisionParticipantIds
+            Set<UUID> memberParticipantIds
     ) {
         public LockedRoomSnapshot {
-            decisionParticipantIds = Set.copyOf(decisionParticipantIds);
+            memberParticipantIds = Set.copyOf(memberParticipantIds);
         }
     }
 
-    record PlanningInputs(int capacity, LocalDate startsOn, LocalDate endsOn, long inputVersion, List<MemberInput> members) {
-        public PlanningInputs {
-            members = List.copyOf(members);
+    record PlanningInputSnapshot(long inputVersion, List<MemberInput> completedInputs) {
+        public PlanningInputSnapshot {
+            completedInputs = List.copyOf(completedInputs);
         }
     }
 
-    record MemberInput(UUID participantId, long inputRevision, InputValues values, boolean complete) {}
+    record MemberInput(UUID participantId, long inputRevision, InputValues values, Optional<Instant> completedAt) {}
 
     record InputValues(Optional<UUID> originStationId, Optional<UUID> destinationStationId, List<HourSlot> slots) {
         public InputValues {

@@ -16,7 +16,7 @@ public record MeetingWindow(
                 : Duration.ofMinutes(30);
         Duration votingMinimum = Duration.ofMinutes(30);
         Instant votingCutoff = meetingAt.minus(Duration.ofHours(3));
-        Instant registrationCutoff = votingCutoff.minus(votingMinimum).minus(Duration.ofMinutes(1));
+        Instant registrationCutoff = votingCutoff.minus(votingMinimum);
         return new MeetingWindow(registrationMinimum, registrationCutoff, votingMinimum, votingCutoff);
     }
 }

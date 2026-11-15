@@ -7,17 +7,18 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface VenueStateReader {
-    /** Returns only the venue state fields visible to the verified room member. */
-    VenueState project(UUID roomId, RoomMember viewer, RoomPhase phase, Optional<Instant> meetingAt, Instant now);
+    /** Projects venue-owned state in the caller's read transaction. */
+    VenueState project(ViewContext context);
+
+    record ViewContext(UUID roomId, RoomMember viewer, RoomPhase phase, Optional<Instant> meetingAt, Instant now) {}
 
     /**
      * Absent phase-specific fields are null. The list of permitted venue actions is always present.
      */
     record VenueState(
-            Integer round,
-            Instant voteClosedAt,
-            CollectionState collection,
+            Registration registration,
             Voting voting,
+            VoteReview voteReview,
             TieDecision tieDecision,
             FinalResult result,
             Recovery recovery,
@@ -28,17 +29,18 @@ public interface VenueStateReader {
         }
     }
 
-    record CollectionState(
+    record Registration(
+            int round,
             Instant closesAt,
-            List<Category> activeCategories,
+            Instant closedAt,
+            List<CategorySetting> categories,
             int uniqueCandidateCount,
             List<UUID> completedParticipantIds,
             List<Place> myNominations,
-            List<CategoryCount> categoryCounts,
-            boolean extensionUsed
+            List<CategoryCount> categoryCounts
     ) {
-        public CollectionState {
-            activeCategories = List.copyOf(activeCategories);
+        public Registration {
+            categories = List.copyOf(categories);
             completedParticipantIds = List.copyOf(completedParticipantIds);
             myNominations = List.copyOf(myNominations);
             if (categoryCounts != null) {
@@ -47,12 +49,22 @@ public interface VenueStateReader {
         }
     }
 
+    record CategorySetting(Category category, boolean required, boolean available, int radiusMeters) {}
+
     record CategoryCount(Category category, int count) {}
 
-    record Voting(Instant closesAt, List<UUID> completedParticipantIds, List<BallotCandidate> candidates, Draft myDraft) {
+    record Voting(int round, Instant closesAt, List<UUID> completedParticipantIds,
+                  List<BallotCandidate> candidates, Draft myDraft) {
         public Voting {
             completedParticipantIds = List.copyOf(completedParticipantIds);
             candidates = List.copyOf(candidates);
+        }
+    }
+
+    /** Decision flags are true only for a host permitted to take the respective action. */
+    record VoteReview(int round, List<UUID> completedParticipantIds, boolean canExtend, boolean canProceed) {
+        public VoteReview {
+            completedParticipantIds = List.copyOf(completedParticipantIds);
         }
     }
 
@@ -68,9 +80,9 @@ public interface VenueStateReader {
 
     record Selection(UUID candidateId, Choice choice) {}
 
-    record Aggregate(int like, int neutral, int dislike, int score) {}
+    record Aggregate(int like, int neutral, int dislike) {}
 
-    record ResultPlace(UUID candidateId, Place place, ResultStatus status, Aggregate aggregate) {}
+    record ResultPlace(UUID candidateId, Place place, Aggregate aggregate) {}
 
     record TieGroup(Category category, List<ResultPlace> candidates) {
         public TieGroup {
@@ -78,7 +90,7 @@ public interface VenueStateReader {
         }
     }
 
-    record TieDecision(long resultRevision, List<TieGroup> groups) {
+    record TieDecision(int round, long resultRevision, List<TieGroup> groups) {
         public TieDecision {
             groups = List.copyOf(groups);
         }
@@ -86,6 +98,7 @@ public interface VenueStateReader {
 
     /** Venue result fields for the room state response. */
     record FinalResult(
+            int round,
             long resultRevision,
             int submittedCount,
             List<ResultPlace> selected,
@@ -95,41 +108,31 @@ public interface VenueStateReader {
         public FinalResult {
             selected = List.copyOf(selected);
             details = List.copyOf(details);
-            if (visitOrder != null) {
-                visitOrder = List.copyOf(visitOrder);
-            }
+            visitOrder = List.copyOf(visitOrder);
         }
     }
 
-    record Recovery(RecoveryReason reason, RecoveryMode mode) {}
+    record Recovery(int round, RecoveryReason reason) {}
 
     enum Category {
-        FOOD, CAFE, BAR, CULTURE
+        FOOD, CAFE, CULTURE, BAR
     }
 
     enum BallotMode {
         VOTE, AUTO_SELECTED
     }
 
-    enum ResultStatus {
-        SELECTED, RANKED, EXCLUDED, AUTO_SELECTED
-    }
-
     enum Choice {
         LIKE, NEUTRAL, DISLIKE
     }
 
-    enum RecoveryMode {
-        REVOTE, RECOLLECT
-    }
-
     enum RecoveryReason {
-        LOW_TURNOUT, ALL_REJECTED, INSUFFICIENT_TIME, RETRY_EXHAUSTED, HOST_DECISION_EXPIRED
+        NO_ELIGIBLE_RESULT, INSUFFICIENT_TIME, RETRY_EXHAUSTED
     }
 
     enum Action {
-        OPEN_COLLECTION, SEARCH_PLACES, EDIT_NOMINATION, COMPLETE_COLLECTION, START_VOTING,
-        EXTEND_COLLECTION, EDIT_PREFERENCES, SUBMIT_VOTE,
-        RECOVER, RESOLVE_TIES, REORDER_VISIT
+        OPEN_COLLECTION, SEARCH_PLACES, EDIT_NOMINATION, COMPLETE_COLLECTION, CLOSE_COLLECTION,
+        START_MINI_TIMER, EXTEND_COLLECTION, START_VOTING, EDIT_PREFERENCES, SUBMIT_VOTE,
+        EXTEND_VOTE, PROCEED_WITH_VOTES, RECOLLECT, RESOLVE_TIES, REORDER_VISIT
     }
 }
