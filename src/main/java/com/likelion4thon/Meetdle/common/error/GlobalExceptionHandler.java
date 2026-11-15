@@ -7,6 +7,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -31,6 +32,14 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity.badRequest()
                 .body(new ErrorBody("INVALID_REQUEST", "요청 값이 올바르지 않아요.", details));
+    }
+
+    /** 경로 값 형식이 틀린 경우. 예: /api/rooms/abc/join (abc는 UUID가 아님) */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorBody> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        return ResponseEntity.badRequest()
+                .body(new ErrorBody("INVALID_REQUEST", "요청 값이 올바르지 않아요.",
+                        Map.of(e.getName(), "형식이 올바르지 않아요")));
     }
 
     /** JSON 문법이 깨졌거나 날짜 형식이 틀린 경우. 예: "from": "11월 20일" */

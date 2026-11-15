@@ -5,7 +5,7 @@ import static org.mockito.Mockito.doReturn;
 
 import com.likelion4thon.Meetdle.contract.BoundaryFixtures;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomRequest;
-import com.likelion4thon.Meetdle.room.dto.CreateRoomRequest.DateRange;
+import com.likelion4thon.Meetdle.room.dto.DateRange;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomResponse;
 import com.likelion4thon.Meetdle.room.invite.InviteCodeGenerator;
 import com.likelion4thon.Meetdle.room.service.RoomService;

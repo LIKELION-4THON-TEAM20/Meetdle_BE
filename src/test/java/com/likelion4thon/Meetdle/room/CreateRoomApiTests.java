@@ -15,23 +15,16 @@ import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.BoundaryFixtures;
 import com.likelion4thon.Meetdle.room.invite.InviteCrypto;
 import java.nio.charset.StandardCharsets;
-import java.time.Clock;
-import java.time.ZoneOffset;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.TestingAuthenticationToken;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.context.jdbc.SqlConfig;
@@ -46,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 @ActiveProfiles("test")
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(RoomApiTestConfig.class)
 @Transactional
 @Sql(scripts = "/fixtures/base-room.sql", config = @SqlConfig(encoding = "UTF-8"))
 class CreateRoomApiTests {
@@ -61,6 +55,14 @@ class CreateRoomApiTests {
 
     @Autowired
     private InviteCrypto inviteCrypto;
+
+    @Autowired
+    private MutableClock clock;
+
+    @BeforeEach
+    void resetClock() {
+        clock.set(BoundaryFixtures.NOW);
+    }
 
     @Test
     void createsRoomAndHostInOneRequest() throws Exception {
@@ -234,28 +236,5 @@ class CreateRoomApiTests {
     private void assertRoomCountUnchanged() {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM room", Integer.class)).isEqualTo(FIXTURE_ROOM_COUNT);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM room_invitation", Integer.class)).isZero();
-    }
-
-    /**
-     * 1) "지금"을 2030-01-01T00:00Z로 고정한다 (만료 시각을 정확히 검사하려고).
-     * 2) 창환님 SecurityConfiguration은 아직 모든 요청을 막는다(denyAll).
-     *    테스트에서만 /api/rooms/** 를 "로그인하면 통과"로 여는 설정을 앞에 끼운다. 운영 코드는 건드리지 않는다.
-     */
-    @TestConfiguration
-    static class TestSecurity {
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(BoundaryFixtures.NOW, ZoneOffset.UTC);
-        }
-
-        @Bean
-        @Order(Ordered.HIGHEST_PRECEDENCE)
-        SecurityFilterChain roomApiTestChain(HttpSecurity http) throws Exception {
-            return http
-                    .securityMatcher("/api/rooms/**")
-                    .authorizeHttpRequests(requests -> requests.anyRequest().authenticated())
-                    .build();
-        }
     }
 }

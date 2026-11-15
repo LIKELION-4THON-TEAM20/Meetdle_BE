@@ -4,8 +4,15 @@ import com.likelion4thon.Meetdle.common.error.ApiException;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomRequest;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomResponse;
+import com.likelion4thon.Meetdle.room.dto.JoinRoomRequest;
+import com.likelion4thon.Meetdle.room.dto.RoomRef;
 import com.likelion4thon.Meetdle.room.service.RoomService;
+import com.likelion4thon.Meetdle.room.service.RoomService.JoinResult;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.PathVariable;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -39,10 +46,31 @@ public class RoomController {
             @AuthenticationPrincipal AuthenticatedUser user,
             @Valid @RequestBody CreateRoomRequest request
     ) {
-        if (user == null) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "로그인이 필요해요.", null);
-        }
-        CreateRoomResponse response = roomService.createRoom(user, request);
+        CreateRoomResponse response = roomService.createRoom(requireLogin(user), request);
         return ResponseEntity.created(URI.create("/api/rooms/" + response.roomId() + "/state")).body(response);
+    }
+
+    /**
+     * A07 POST /api/rooms/{roomId}/join  본문: {"joinProof":"..."}
+     * 새로 가입 → 201 {"roomId":"..."}, 이미 회원 → 200 {"roomId":"..."}
+     */
+    @PostMapping("/{roomId}/join")
+    public ResponseEntity<RoomRef> join(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID roomId,
+            @Valid @RequestBody JoinRoomRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        // 세션이 없으면 새로 만들지 않는다 (없으면 당연히 증표도 없음 → 404)
+        HttpSession session = httpRequest.getSession(false);
+        JoinResult result = roomService.join(requireLogin(user), roomId, request.joinProof(), session);
+        return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(result.room());
+    }
+
+    private static AuthenticatedUser requireLogin(AuthenticatedUser user) {
+        if (user == null) {
+            throw ApiException.of(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "로그인이 필요해요.");
+        }
+        return user;
     }
 }

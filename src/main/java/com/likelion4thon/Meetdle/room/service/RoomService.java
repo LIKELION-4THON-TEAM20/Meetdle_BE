@@ -4,13 +4,19 @@ import com.likelion4thon.Meetdle.common.error.ApiException;
 import com.likelion4thon.Meetdle.common.time.ServiceZone;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.RoomMember.Role;
+import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.domain.NewRoom;
 import com.likelion4thon.Meetdle.room.domain.NewRoomMember;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomRequest;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomResponse;
+import com.likelion4thon.Meetdle.room.dto.RoomRef;
 import com.likelion4thon.Meetdle.room.invite.InvitationIssuer;
 import com.likelion4thon.Meetdle.room.invite.InvitationIssuer.IssuedInvite;
+import com.likelion4thon.Meetdle.room.invite.JoinProofStore;
+import com.likelion4thon.Meetdle.room.invite.JoinProofStore.JoinGrant;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,13 +35,53 @@ public class RoomService {
 
     private final RoomRepository roomRepository;
     private final InvitationIssuer invitationIssuer;
+    private final JoinProofStore joinProofStore;
     private final Clock clock;
 
-    public RoomService(RoomRepository roomRepository, InvitationIssuer invitationIssuer, Clock clock) {
+    public RoomService(RoomRepository roomRepository, InvitationIssuer invitationIssuer,
+                       JoinProofStore joinProofStore, Clock clock) {
         this.roomRepository = roomRepository;
         this.invitationIssuer = invitationIssuer;
+        this.joinProofStore = joinProofStore;
         this.clock = clock;
     }
+
+    /**
+     * A07 초대로 가입. 명세 순서대로 검사한다.
+     * 1) 증표가 이 세션·이 사람·이 방 것인지 → 아니면 404 INVALID_INVITATION
+     * 2) 증표 10분이 지났는지 → 410 INVITATION_EXPIRED
+     * 3) 방 행을 잠근 뒤, 이미 회원이면 → 200 (기존 회원 결과. 같은 증표로 다시 눌러도 안전)
+     * 4) 추천 계산이 시작됐으면 → 409 JOIN_CLOSED, 정원이 찼으면 → 409 ROOM_FULL
+     * 5) 통과하면 MEMBER로 저장 → 201
+     */
+    @Transactional
+    public JoinResult join(AuthenticatedUser user, UUID roomId, String joinProof, HttpSession session) {
+        JoinGrant grant = joinProofStore.find(session, joinProof)
+                .filter(g -> g.userId().equals(user.userId()) && g.roomId().equals(roomId))
+                .orElseThrow(() -> ApiException.of(HttpStatus.NOT_FOUND, "INVALID_INVITATION",
+                        "가입 증표가 올바르지 않아요. 초대 코드를 다시 입력해 주세요."));
+        if (grant.isExpiredAt(clock.instant())) {
+            throw ApiException.of(HttpStatus.GONE, "INVITATION_EXPIRED", "가입 증표 시간이 지났어요. 코드를 다시 입력해 주세요.");
+        }
+
+        LockedRoomRow room = roomRepository.lockRoom(roomId)
+                .orElseThrow(() -> ApiException.of(HttpStatus.NOT_FOUND, "INVALID_INVITATION", "방을 찾을 수 없어요."));
+        if (roomRepository.isMember(roomId, user.userId())) {
+            return new JoinResult(new RoomRef(roomId), false);
+        }
+        if (room.joinClosedAt() != null) {
+            throw ApiException.of(HttpStatus.CONFLICT, "JOIN_CLOSED", "방장이 이미 약속 계산을 시작해서 가입할 수 없어요.");
+        }
+        if (roomRepository.countMembers(roomId) >= room.capacity()) {
+            throw ApiException.of(HttpStatus.CONFLICT, "ROOM_FULL", "방 정원이 꽉 찼어요.");
+        }
+        roomRepository.insertMember(new NewRoomMember(
+                UUID.randomUUID(), roomId, user.userId(), user.nickname(), Role.MEMBER));
+        return new JoinResult(new RoomRef(roomId), true);
+    }
+
+    /** @param created true면 새로 가입(201), false면 원래 회원(200) */
+    public record JoinResult(RoomRef room, boolean created) {}
 
     /**
      * A05 방 만들기. 방 1행 + 방장 참가자 1행 + 초대 1행을 한 트랜잭션에서 저장한다.

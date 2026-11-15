@@ -21,6 +21,11 @@ public class ApiException extends RuntimeException {
         this.details = details == null ? null : Map.copyOf(details);
     }
 
+    /** details 없이 상태·코드·메시지만. 예: of(NOT_FOUND, "INVITATION_NOT_FOUND", "초대를 찾을 수 없어요.") */
+    public static ApiException of(HttpStatus status, String code, String message) {
+        return new ApiException(status, code, message, null);
+    }
+
     /** 400 INVALID_REQUEST. field에는 문제가 된 입력 칸 이름을 넣는다. */
     public static ApiException invalidRequest(String field, String reason) {
         return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "요청 값이 올바르지 않아요.",
