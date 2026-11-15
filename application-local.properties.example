@@ -28,4 +28,8 @@ meetdle.seoul-metro.service-key=
 
 # Web Push
 meetdle.web-push.vapid-public-key=
-meetdle.web-push.vapid-private-key=
+meetdle.web-push.vapid-private-key=# Run from the project root: .\gradlew.bat bootRun --args='--spring.profiles.active=local'
+# Local frontend origin (no trailing slash)
+meetdle.frontend.origin=http://localhost:5173
+# For local HTTP only
+server.servlet.session.cookie.secure=false
