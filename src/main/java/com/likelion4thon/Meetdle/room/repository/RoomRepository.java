@@ -70,13 +70,46 @@ public class RoomRepository {
      * 한 명이 잠금을 쥐고 4번째로 들어간 뒤에야 다른 한 명이 "꽉 찼네"를 확인한다.
      */
     public Optional<LockedRoomRow> lockRoom(UUID roomId) {
-        return jdbc.sql("SELECT room_id, capacity, join_closed_at FROM room WHERE room_id = :roomId FOR UPDATE")
+        return jdbc.sql("""
+                        SELECT room_id, capacity, starts_on, ends_on, join_closed_at, inputs_closed_at
+                          FROM room WHERE room_id = :roomId FOR UPDATE
+                        """)
                 .param("roomId", roomId.toString())
                 .query((rs, rowNum) -> new LockedRoomRow(
                         UUID.fromString(rs.getString("room_id")),
                         rs.getInt("capacity"),
-                        toInstant(rs.getObject("join_closed_at", LocalDateTime.class))))
+                        rs.getObject("starts_on", LocalDate.class),
+                        rs.getObject("ends_on", LocalDate.class),
+                        toInstant(rs.getObject("join_closed_at", LocalDateTime.class)),
+                        toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class))))
                 .optional();
+    }
+
+    /** 이 방에서 이 사용자의 참가자 ID. 회원이 아니면 비어 있다. */
+    public Optional<UUID> findParticipantId(UUID roomId, UUID userId) {
+        return jdbc.sql("SELECT participant_id FROM room_member WHERE room_id = :roomId AND user_id = :userId")
+                .param("roomId", roomId.toString())
+                .param("userId", userId.toString())
+                .query(String.class)
+                .optional()
+                .map(UUID::fromString);
+    }
+
+    public boolean exists(UUID roomId) {
+        return jdbc.sql("SELECT COUNT(*) FROM room WHERE room_id = :roomId")
+                .param("roomId", roomId.toString())
+                .query(Integer.class)
+                .single() > 0;
+    }
+
+    /**
+     * 누군가의 입력이 실제로 바뀌었을 때 방의 입력 버전과 revision을 1씩 올린다.
+     * 예: input_version 7 → 8. 방장이 A11 계산할 때 "내가 본 버전이 최신인지" 확인하는 데 쓴다.
+     */
+    public void bumpInputVersion(UUID roomId) {
+        jdbc.sql("UPDATE room SET input_version = input_version + 1, revision = revision + 1 WHERE room_id = :roomId")
+                .param("roomId", roomId.toString())
+                .update();
     }
 
     public int countMembers(UUID roomId) {
