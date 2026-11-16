@@ -161,7 +161,7 @@ public class SubwayData {
      * 역 이름으로 항상 같은 UUID를 만든다 (서버를 다시 켜도, 다른 컴퓨터여도 같은 ID).
      * 모양은 명세대로 UUID v4 형식(버전 4, variant 비트)을 맞춘다.
      */
-    static UUID stationIdOf(String key) {
+    public static UUID stationIdOf(String key) {
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256")
                     .digest(("meetdle-station:" + key).getBytes(StandardCharsets.UTF_8));

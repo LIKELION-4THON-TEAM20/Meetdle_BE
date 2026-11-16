@@ -1,5 +1,6 @@
 package com.likelion4thon.Meetdle.room.repository;
 
+import com.likelion4thon.Meetdle.contract.RoomMember;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.domain.MyRoomRow;
@@ -74,7 +75,8 @@ public class RoomRepository {
      */
     public Optional<LockedRoomRow> lockRoom(UUID roomId) {
         return jdbc.sql("""
-                        SELECT room_id, capacity, starts_on, ends_on, join_closed_at, inputs_closed_at
+                        SELECT room_id, capacity, starts_on, ends_on, join_closed_at, inputs_closed_at,
+                               phase, input_version
                           FROM room WHERE room_id = :roomId FOR UPDATE
                         """)
                 .param("roomId", roomId.toString())
@@ -84,7 +86,9 @@ public class RoomRepository {
                         rs.getObject("starts_on", LocalDate.class),
                         rs.getObject("ends_on", LocalDate.class),
                         toInstant(rs.getObject("join_closed_at", LocalDateTime.class)),
-                        toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class))))
+                        toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class)),
+                        RoomPhase.valueOf(rs.getString("phase")),
+                        rs.getLong("input_version")))
                 .optional();
     }
 
@@ -137,6 +141,32 @@ public class RoomRepository {
      */
     public void bumpInputVersion(UUID roomId) {
         jdbc.sql("UPDATE room SET input_version = input_version + 1, revision = revision + 1 WHERE room_id = :roomId")
+                .param("roomId", roomId.toString())
+                .update();
+    }
+
+    /** 이 방에서 이 사용자의 역할(HOST/MEMBER)과 참가자 ID. 회원이 아니면 비어 있다. */
+    public Optional<RoomMember> findMember(UUID roomId, UUID userId) {
+        return jdbc.sql("SELECT participant_id, role FROM room_member WHERE room_id = :roomId AND user_id = :userId")
+                .param("roomId", roomId.toString())
+                .param("userId", userId.toString())
+                .query((rs, rowNum) -> new RoomMember(
+                        UUID.fromString(rs.getString("participant_id")),
+                        RoomMember.Role.valueOf(rs.getString("role"))))
+                .optional();
+    }
+
+    /**
+     * A11 첫 계산 시작: 가입을 마감하고(join_closed_at) 단계를 OPTIONS_READY로 넘긴다. revision도 1 올린다.
+     * 예: 3명 방에서 방장이 계산을 누르면 그 뒤로는 초대 링크로 새로 들어올 수 없다.
+     */
+    public void startPlanning(UUID roomId, Instant now) {
+        jdbc.sql("""
+                        UPDATE room SET join_closed_at = :now, phase = :phase, revision = revision + 1
+                         WHERE room_id = :roomId
+                        """)
+                .param("now", LocalDateTime.ofInstant(now, ZoneOffset.UTC))
+                .param("phase", RoomPhase.OPTIONS_READY.name())
                 .param("roomId", roomId.toString())
                 .update();
     }

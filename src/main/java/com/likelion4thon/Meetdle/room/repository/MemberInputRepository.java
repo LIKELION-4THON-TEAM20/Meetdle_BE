@@ -90,6 +90,29 @@ public class MemberInputRepository {
         }
     }
 
+    /**
+     * A11: 이 방에서 입력을 "완료"한 사람들의 출발역·목적지. 참가자 ID 순으로 정렬.
+     * 완료하려면 두 역이 꼭 있어야 하므로(A10) 역 ID는 null이 아니다.
+     */
+    public List<MemberInputRow> findCompletedInRoom(UUID roomId) {
+        return jdbc.sql("""
+                        SELECT i.participant_id, i.origin_station_id, i.destination_station_id,
+                               i.input_revision, i.completed_at
+                          FROM member_input i
+                          JOIN room_member m ON m.participant_id = i.participant_id
+                         WHERE m.room_id = :roomId AND i.completed_at IS NOT NULL
+                         ORDER BY i.participant_id
+                        """)
+                .param("roomId", roomId.toString())
+                .query((rs, rowNum) -> new MemberInputRow(
+                        UUID.fromString(rs.getString("participant_id")),
+                        toUuid(rs.getString("origin_station_id")),
+                        toUuid(rs.getString("destination_station_id")),
+                        rs.getLong("input_revision"),
+                        toInstant(rs.getObject("completed_at", LocalDateTime.class))))
+                .list();
+    }
+
     private static java.util.Map<String, Object> params(MemberInputRow row) {
         java.util.Map<String, Object> params = new java.util.HashMap<>();
         params.put("participantId", row.participantId().toString());
