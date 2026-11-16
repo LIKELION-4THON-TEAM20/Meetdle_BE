@@ -178,7 +178,7 @@ class PlaceRegistrationTests {
         putCommand(OPEN + "/me/completion", observer, "{\"round\":1}", 204);
         putCommand(OPEN + "/me/completion", observer, "{\"round\":1}", 204);
         assertEquals(FINAL_PLACE_CONFIRMED, phase());
-        var result = reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(MEMBER), phase(),
+        var result = reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(MEMBER), phase(), fixture.capacity(),
                 fixture.selectedMeeting().map(selected -> selected.meetingAt()), now)).result();
         assertEquals(0, result.submittedCount());
         assertEquals(List.of(Category.FOOD), result.selected().stream().map(place -> place.place().category()).toList());
@@ -245,7 +245,7 @@ class PlaceRegistrationTests {
     }
 
     private VenueStateReader.Voting voteState(UUID user) {
-        return reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(user), phase(),
+        return reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(user), phase(), confirmedVenueRoom().capacity(),
                 confirmedVenueRoom().selectedMeeting().map(meeting -> meeting.meetingAt()), now)).voting();
     }
 
@@ -255,7 +255,7 @@ class PlaceRegistrationTests {
     }
 
     private VenueStateReader.Registration projection(UUID user) {
-        return reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(user), phase(),
+        return reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(user), phase(), confirmedVenueRoom().capacity(),
                 confirmedVenueRoom().selectedMeeting().map(meeting -> meeting.meetingAt()), now)).registration();
     }
 

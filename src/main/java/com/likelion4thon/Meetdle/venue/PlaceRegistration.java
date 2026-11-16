@@ -103,10 +103,12 @@ class PlaceRegistration {
                     """, id, number, setting.category().name(), setting.required(), setting.available(),
                     setting.radiusMeters());
         }
-        store.jdbc().update("""
-                INSERT INTO round_member (room_id, round_no, participant_id)
-                SELECT room_id, ?, participant_id FROM room_member WHERE room_id = ?
-                """, number, id);
+        var members = lock.snapshot().memberParticipantIds().stream()
+                .map(participantId -> new Object[] {id, number, participantId.toString()})
+                .toList();
+        store.jdbc().batchUpdate("""
+                INSERT INTO round_member (room_id, round_no, participant_id) VALUES (?, ?, ?)
+                """, members);
         access.recordChange(lock, PLACE_SUBMISSION_OPEN);
         return new Opened(number, settings, deadline);
     }

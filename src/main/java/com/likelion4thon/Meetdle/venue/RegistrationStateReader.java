@@ -74,8 +74,7 @@ class RegistrationStateReader implements VenueStateReader {
             }
         }
         if (host && hasTime) {
-            int capacity = store.jdbc().queryForObject("SELECT capacity FROM room WHERE room_id = ?",
-                    Integer.class, round.room());
+            int capacity = context.capacity();
             boolean early = PlaceRegistration.canStartEarly(capacity, completed.size());
             if (enough && context.phase() == PLACE_SUBMISSION_CLOSED) {
                 actions.add(Action.START_VOTING);

@@ -10,7 +10,9 @@ public interface VenueStateReader {
     /** Projects venue-owned state in the caller's read transaction. */
     VenueState project(ViewContext context);
 
-    record ViewContext(UUID roomId, RoomMember viewer, RoomPhase phase, Optional<Instant> meetingAt, Instant now) {}
+    /** Verified room state from the same read transaction as the venue projection. */
+    record ViewContext(UUID roomId, RoomMember viewer, RoomPhase phase, int capacity,
+                       Optional<Instant> meetingAt, Instant now) {}
 
     /**
      * Absent phase-specific fields are null. The list of permitted venue actions is always present.
