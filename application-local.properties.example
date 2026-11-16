@@ -16,3 +16,6 @@ spring.datasource.password=여기에_내_MySQL_비밀번호
 # 각자 컴퓨터의 DB는 따로라서, 팀원끼리 키가 달라도 괜찮다.
 meetdle.invite.hmac-key=여기에_base64_32바이트
 meetdle.invite.encryption-key=여기에_base64_32바이트
+
+# ODsay 대중교통 API 키 (A: 역 목록·이동시간). lab.odsay.com에서 Server 플랫폼으로 발급
+meetdle.odsay.api-key=여기에_ODsay_키
