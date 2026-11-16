@@ -31,7 +31,7 @@ public class InvitationIssuer {
             InviteCodeGenerator generator,
             InviteCrypto crypto,
             RoomInvitationRepository invitationRepository,
-            @Value("${meetdle.front-origin}") String frontOrigin
+            @Value("${meetdle.frontend.origin:http://localhost:5173}") String frontOrigin
     ) {
         this.generator = generator;
         this.crypto = crypto;
