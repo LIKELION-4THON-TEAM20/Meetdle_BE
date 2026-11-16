@@ -1,6 +1,8 @@
 package com.likelion4thon.Meetdle.room.repository;
 
+import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
+import com.likelion4thon.Meetdle.room.domain.MyRoomRow;
 import com.likelion4thon.Meetdle.room.domain.NewRoom;
 import com.likelion4thon.Meetdle.room.domain.NewRoomMember;
 import com.likelion4thon.Meetdle.room.domain.RoomPreviewRow;
@@ -11,6 +13,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -83,6 +86,32 @@ public class RoomRepository {
                         toInstant(rs.getObject("join_closed_at", LocalDateTime.class)),
                         toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class))))
                 .optional();
+    }
+
+    /**
+     * 내가 회원인 방 전부 (A24). 한 사람이 속한 방은 많아야 수십 개라서 한 번에 읽고 정렬은 서비스에서 한다.
+     * TODO(A12): meeting_selection이 생기면 LEFT JOIN으로 확정 시각(meetingAt, endsAt)을 채운다. 지금은 항상 null.
+     */
+    public List<MyRoomRow> findRoomsOfUser(UUID userId) {
+        return jdbc.sql("""
+                        SELECT r.room_id, r.title, r.starts_on, r.ends_on, r.capacity, r.phase,
+                               (SELECT COUNT(*) FROM room_member c WHERE c.room_id = r.room_id) AS joined_count
+                          FROM room r
+                          JOIN room_member m ON m.room_id = r.room_id
+                         WHERE m.user_id = :userId
+                        """)
+                .param("userId", userId.toString())
+                .query((rs, rowNum) -> new MyRoomRow(
+                        UUID.fromString(rs.getString("room_id")),
+                        rs.getString("title"),
+                        rs.getObject("starts_on", LocalDate.class),
+                        rs.getObject("ends_on", LocalDate.class),
+                        rs.getInt("capacity"),
+                        rs.getInt("joined_count"),
+                        RoomPhase.valueOf(rs.getString("phase")),
+                        null,
+                        null))
+                .list();
     }
 
     /** 이 방에서 이 사용자의 참가자 ID. 회원이 아니면 비어 있다. */

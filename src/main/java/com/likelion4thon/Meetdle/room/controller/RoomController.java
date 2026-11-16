@@ -5,33 +5,39 @@ import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomRequest;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomResponse;
 import com.likelion4thon.Meetdle.room.dto.JoinRoomRequest;
+import com.likelion4thon.Meetdle.room.dto.MyRoomsPage;
 import com.likelion4thon.Meetdle.room.dto.RoomRef;
+import com.likelion4thon.Meetdle.room.service.MyRoomsService;
 import com.likelion4thon.Meetdle.room.service.RoomService;
 import com.likelion4thon.Meetdle.room.service.RoomService.JoinResult;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
-import org.springframework.web.bind.annotation.PathVariable;
-import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
+import java.util.UUID;
 
-/** 방 관련 HTTP 요청을 받는 홀 직원. 규칙 검사는 RoomService에 맡긴다. */
+/** 방 관련 HTTP 요청을 받는 홀 직원. 규칙 검사는 서비스에 맡긴다. */
 @RestController
 @RequestMapping("/api/rooms")
 public class RoomController {
 
     private final RoomService roomService;
+    private final MyRoomsService myRoomsService;
 
-    public RoomController(RoomService roomService) {
+    public RoomController(RoomService roomService, MyRoomsService myRoomsService) {
         this.roomService = roomService;
+        this.myRoomsService = myRoomsService;
     }
 
     /**
@@ -48,6 +54,20 @@ public class RoomController {
     ) {
         CreateRoomResponse response = roomService.createRoom(requireLogin(user), request);
         return ResponseEntity.created(URI.create("/api/rooms/" + response.roomId() + "/state")).body(response);
+    }
+
+    /**
+     * A24 GET /api/rooms?scope=ALL|UPCOMING|PAST&limit=20&cursor=...
+     * 예: /api/rooms?scope=UPCOMING&limit=10 → 다가오는 약속 10개 + 다음 페이지 커서
+     */
+    @GetMapping
+    public MyRoomsPage myRooms(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestParam(required = false) String scope,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String cursor
+    ) {
+        return myRoomsService.list(requireLogin(user), scope, limit, cursor);
     }
 
     /**
