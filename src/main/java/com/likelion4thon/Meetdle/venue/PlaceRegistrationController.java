@@ -31,6 +31,21 @@ class PlaceRegistrationController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/voting/decision")
+    ResponseEntity<Void> decide(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestHeader(value = "Idempotency-Key", required = false) UUID key,
+            @RequestBody PlaceVoting.Decision request) {
+        voting.decide(roomId, user.userId(), key, request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/recovery")
+    ResponseEntity<PlaceRegistration.Extended> recover(@PathVariable UUID roomId,
+            @AuthenticationPrincipal AuthenticatedUser user, @RequestHeader("Idempotency-Key") UUID key,
+            @RequestBody PlaceVoting.Recollect request) {
+        return ResponseEntity.status(201).body(voting.recollect(roomId, user.userId(), key, request));
+    }
+
     @PutMapping("/preferences/me")
     ResponseEntity<Draft> savePreferences(
             @PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,

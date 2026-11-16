@@ -88,7 +88,7 @@ class PlaceRegistration {
         });
     }
 
-    private Opened createRound(RoomVenueAccess access, RoomVenueAccess.LockedRoomVenue lock,
+    Opened createRound(RoomVenueAccess access, RoomVenueAccess.LockedRoomVenue lock,
                                SelectedMeeting meeting, Instant deadline, List<CategorySetting> settings) {
         UUID room = lock.snapshot().roomId();
         String id = room.toString();
@@ -125,13 +125,18 @@ class PlaceRegistration {
     }
 
     private static Instant openDeadline(RoomVenueSnapshot snapshot, SelectedMeeting meeting, Open request) {
+        return registrationDeadline(snapshot, meeting, request.closesAt(), false);
+    }
+
+    static Instant registrationDeadline(RoomVenueSnapshot snapshot, SelectedMeeting meeting,
+                                        Instant requested, boolean required) {
         var now = snapshot.now();
         var minimum = now.plus(MeetingWindow.calculate(meeting.meetingAt(), now).registrationMinimum());
-        var deadline = request.closesAt() == null ? minimum : request.closesAt();
+        var deadline = !required && requested == null ? minimum : requested;
         if (minimum.isAfter(cutoff(meeting.meetingAt(), now))) {
             throw conflict("INSUFFICIENT_TIME");
         }
-        if (deadline.isBefore(minimum) || deadline.isAfter(cutoff(meeting.meetingAt(), now))) {
+        if (deadline == null || deadline.isBefore(minimum) || deadline.isAfter(cutoff(meeting.meetingAt(), now))) {
             throw new VenueException(400, "INVALID_DEADLINE");
         }
         return deadline;

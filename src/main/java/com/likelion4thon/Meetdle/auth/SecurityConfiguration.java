@@ -74,7 +74,8 @@ class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/rooms/*/places/search",
                                 "/api/rooms/*/place-submission/categories").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/rooms/*/place-submission",
-                                "/api/rooms/*/place-submission/extension", "/api/rooms/*/voting").authenticated()
+                                "/api/rooms/*/place-submission/extension", "/api/rooms/*/voting",
+                                "/api/rooms/*/voting/decision", "/api/rooms/*/recovery").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/rooms/*/place-submission/me/*",
                                 "/api/rooms/*/place-submission/closure", "/api/rooms/*/preferences/me",
                                 "/api/rooms/*/vote-submissions/me").authenticated()

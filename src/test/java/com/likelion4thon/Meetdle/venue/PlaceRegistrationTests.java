@@ -56,6 +56,7 @@ class PlaceRegistrationTests {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlaceRegistration registration;
+    @Autowired PlaceVoting voting;
     @Autowired VenueStateReader reader;
     @MockitoBean RoomVenueAccess rooms;
     @MockitoBean KakaoLocal kakao;
@@ -242,11 +243,47 @@ class PlaceRegistrationTests {
         now = deadline;
         putCommand(preferences, member, edit.formatted(competitive), 409);
         putCommand(submissions, member, "{\"round\":2,\"draftRevision\":0}", 409);
+
+        voting.advanceDeadline(ROOM_ID);
+        assertEquals(VOTE_REVIEW_REQUIRED, phase());
+        assertEquals(true, venueState(HOST.userId()).voteReview().canExtend());
+        assertEquals(true, venueState(HOST.userId()).voteReview().canProceed());
+        assertEquals(false, venueState(MEMBER).voteReview().canProceed());
+        String decision = ROOT + "/voting/decision";
+        String extend = """
+                {"round":2,"action":"EXTEND","closesAt":"%s"}
+                """.formatted(now.plusSeconds(1800));
+        UUID extendKey = UUID.randomUUID();
+        postCommand(decision, member, extendKey, extend, 403);
+        postCommand(decision, host, extendKey, extend, 204);
+        postCommand(decision, host, extendKey, extend, 204);
+        assertEquals(List.of(HOST_PARTICIPANT), voteState(MEMBER).completedParticipantIds());
+        putCommand(preferences, member, edit.formatted(competitive).replace("LIKE", "DISLIKE"), 200);
+
+        now = now.plusSeconds(1800);
+        voting.advanceDeadline(ROOM_ID);
+        assertEquals(VOTE_REVIEW_REQUIRED, phase());
+        assertEquals(false, venueState(HOST.userId()).voteReview().canExtend());
+        postCommand(decision, host, UUID.randomUUID(), extend, 409);
+        postCommand(decision, host, UUID.randomUUID(), "{\"round\":2,\"action\":\"PROCEED\"}", 204);
+        voting.advanceDeadline(ROOM_ID);
+        putCommand(submissions, host, submit, 204);
+        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+        var result = venueState(MEMBER).result();
+        assertEquals(1, result.submittedCount());
+        assertEquals(List.of(auto, competitive), result.visitOrder());
+        assertEquals(new VenueStateReader.Aggregate(1, 0, 0), result.selected().get(1).aggregate());
+        assertEquals("HOST_PROCEED", jdbc.queryForObject(
+                "SELECT vote_close_reason FROM venue_round WHERE room_id = ? AND round_no = 2", String.class, room));
     }
 
     private VenueStateReader.Voting voteState(UUID user) {
+        return venueState(user).voting();
+    }
+
+    private VenueStateReader.VenueState venueState(UUID user) {
         return reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(user), phase(), confirmedVenueRoom().capacity(),
-                confirmedVenueRoom().selectedMeeting().map(meeting -> meeting.meetingAt()), now)).voting();
+                confirmedVenueRoom().selectedMeeting().map(meeting -> meeting.meetingAt()), now));
     }
 
     private RoomPhase phase() {

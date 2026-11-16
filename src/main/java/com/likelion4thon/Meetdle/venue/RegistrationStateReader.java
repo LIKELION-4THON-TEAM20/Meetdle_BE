@@ -14,9 +14,12 @@ class RegistrationStateReader implements VenueStateReader {
     private final RegistrationStore store;
     private final PlaceVoting voting;
 
-    RegistrationStateReader(RegistrationStore store, PlaceVoting voting) {
+    private final VoteResults results;
+
+    RegistrationStateReader(RegistrationStore store, PlaceVoting voting, VoteResults results) {
         this.store = store;
         this.voting = voting;
+        this.results = results;
     }
 
     @Override
@@ -34,8 +37,41 @@ class RegistrationStateReader implements VenueStateReader {
             }
         }
         if (context.phase() == FINAL_PLACE_CONFIRMED) {
-            var result = store.latest(context.roomId()).flatMap(store::automaticResult).orElse(null);
+            var result = store.latest(context.roomId()).map(results::finalized).orElse(null);
             return new VenueState(null, null, null, null, result, null, actions);
+        }
+        if (context.phase() == WAITING_FOR_HOST_DECISION && host) {
+            var ties = store.latest(context.roomId()).map(results::ties).orElse(null);
+            return new VenueState(null, null, null, ties, null, null, actions);
+        }
+        if (context.phase() == VOTE_REVIEW_REQUIRED) {
+            return store.latest(context.roomId()).map(round -> {
+                var submitted = voting.submitted(round);
+                boolean beforeCutoff = meetingAt != null
+                        && context.now().isBefore(MeetingWindow.calculate(meetingAt, context.now()).votingCutoff());
+                boolean canExtend = host && beforeCutoff && round.voteExtensionCount() == 0;
+                boolean canProceed = host && beforeCutoff && !submitted.isEmpty();
+                if (canExtend) {
+                    actions.add(Action.EXTEND_VOTE);
+                }
+                if (canProceed) {
+                    actions.add(Action.PROCEED_WITH_VOTES);
+                }
+                return new VenueState(null, null, new VoteReview(round.number(), submitted, canExtend, canProceed),
+                        null, null, null, actions);
+            }).orElseGet(() -> state(null, actions));
+        }
+        if (context.phase() == RECOVERY_REQUIRED || context.phase() == ENDED) {
+            return store.latest(context.roomId()).filter(round -> round.recoveryReason() != null).map(round -> {
+                var reason = RecoveryReason.valueOf(round.recoveryReason());
+                if (context.phase() == RECOVERY_REQUIRED && meetingAt != null) {
+                    reason = PlaceVoting.recoveryReason(round, meetingAt, context.now());
+                    if (host && reason == RecoveryReason.NO_ELIGIBLE_RESULT) {
+                        actions.add(Action.RECOLLECT);
+                    }
+                }
+                return new VenueState(null, null, null, null, null, new Recovery(round.number(), reason), actions);
+            }).orElseGet(() -> state(null, actions));
         }
         if (context.phase() == VOTING_OPEN) {
             return store.latest(context.roomId()).map(round -> {

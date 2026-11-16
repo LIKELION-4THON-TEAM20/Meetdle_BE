@@ -28,12 +28,13 @@ class RegistrationStore {
     Optional<Round> latest(UUID room) {
         return jdbc.query("""
                 SELECT round_no, collection_closes_at, collection_closed_at, collection_extended_at,
-                    mini_timer_used_at, vote_closes_at FROM venue_round
+                    mini_timer_used_at, vote_closes_at, vote_extension_count, recovery_reason FROM venue_round
                 WHERE room_id = ? ORDER BY round_no DESC LIMIT 1
                 """, (rs, row) -> new Round(room.toString(), rs.getInt("round_no"),
                 instant(rs, "collection_closes_at"), instant(rs, "collection_closed_at"),
                 instant(rs, "collection_extended_at") != null, instant(rs, "mini_timer_used_at") != null,
-                instant(rs, "vote_closes_at")), room.toString()).stream().findFirst();
+                instant(rs, "vote_closes_at"), rs.getInt("vote_extension_count"),
+                rs.getString("recovery_reason")), room.toString()).stream().findFirst();
     }
 
     List<CategorySetting> categories(Round round) {
@@ -112,26 +113,6 @@ class RegistrationStore {
                     """, round.room(), round.number(), candidate, position++);
         }
         return true;
-    }
-
-    Optional<FinalResult> automaticResult(Round round) {
-        var revision = jdbc.query("""
-                SELECT result_revision FROM venue_result WHERE room_id = ? AND round_no = ?
-                AND finalized_at IS NOT NULL AND submitted_count = 0
-                """, (rs, row) -> rs.getLong(1), round.room(), round.number()).stream().findFirst();
-        if (revision.isEmpty()) {
-            return Optional.empty();
-        }
-        var selected = jdbc.query("""
-                SELECT c.candidate_id, c.name, c.address, c.lat, c.lng, c.category, c.detail_url
-                FROM result_place r JOIN place_candidate c
-                  ON c.room_id = r.room_id AND c.round_no = r.round_no AND c.candidate_id = r.candidate_id
-                WHERE r.room_id = ? AND r.round_no = ? AND r.result_status = 'SELECTED'
-                ORDER BY r.visit_position
-                """, (rs, row) -> new ResultPlace(UUID.fromString(rs.getString("candidate_id")), place(rs), null),
-                round.room(), round.number());
-        return revision.map(value -> new FinalResult(round.number(), value, 0, selected, selected,
-                selected.stream().map(ResultPlace::candidateId).toList()));
     }
 
     private static int count(List<CategoryCount> counts, Category category) {
@@ -222,5 +203,5 @@ class RegistrationStore {
     }
 
     record Round(String room, int number, Instant closesAt, Instant closedAt, boolean extended,
-                 boolean miniTimerUsed, Instant voteClosesAt) {}
+                 boolean miniTimerUsed, Instant voteClosesAt, int voteExtensionCount, String recoveryReason) {}
 }
