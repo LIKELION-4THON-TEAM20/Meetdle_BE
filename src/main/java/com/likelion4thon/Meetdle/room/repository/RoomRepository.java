@@ -76,7 +76,7 @@ public class RoomRepository {
     public Optional<LockedRoomRow> lockRoom(UUID roomId) {
         return jdbc.sql("""
                         SELECT room_id, capacity, starts_on, ends_on, join_closed_at, inputs_closed_at,
-                               phase, input_version
+                               phase, input_version, current_selection_id
                           FROM room WHERE room_id = :roomId FOR UPDATE
                         """)
                 .param("roomId", roomId.toString())
@@ -88,20 +88,27 @@ public class RoomRepository {
                         toInstant(rs.getObject("join_closed_at", LocalDateTime.class)),
                         toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class)),
                         RoomPhase.valueOf(rs.getString("phase")),
-                        rs.getLong("input_version")))
+                        rs.getLong("input_version"),
+                        rs.getString("current_selection_id") == null ? null
+                                : UUID.fromString(rs.getString("current_selection_id"))))
                 .optional();
     }
 
     /**
      * 내가 회원인 방 전부 (A24). 한 사람이 속한 방은 많아야 수십 개라서 한 번에 읽고 정렬은 서비스에서 한다.
-     * TODO(A12): meeting_selection이 생기면 LEFT JOIN으로 확정 시각(meetingAt, endsAt)을 채운다. 지금은 항상 null.
+     * 확정 시각(meetingAt, endsAt)은 지금 확정된 선택(current_selection_id)의 일시 칸에서 읽는다. 확정 전이면 null.
      */
     public List<MyRoomRow> findRoomsOfUser(UUID userId) {
         return jdbc.sql("""
                         SELECT r.room_id, r.title, r.starts_on, r.ends_on, r.capacity, r.phase,
-                               (SELECT COUNT(*) FROM room_member c WHERE c.room_id = r.room_id) AS joined_count
+                               (SELECT COUNT(*) FROM room_member c WHERE c.room_id = r.room_id) AS joined_count,
+                               so.starts_at, so.ends_at
                           FROM room r
                           JOIN room_member m ON m.room_id = r.room_id
+                          LEFT JOIN meeting_selection ms
+                                 ON ms.room_id = r.room_id AND ms.selection_id = r.current_selection_id
+                          LEFT JOIN slot_option so
+                                 ON so.options_id = ms.options_id AND so.slot_id = ms.slot_id
                          WHERE m.user_id = :userId
                         """)
                 .param("userId", userId.toString())
@@ -113,8 +120,8 @@ public class RoomRepository {
                         rs.getInt("capacity"),
                         rs.getInt("joined_count"),
                         RoomPhase.valueOf(rs.getString("phase")),
-                        null,
-                        null))
+                        toInstant(rs.getObject("starts_at", LocalDateTime.class)),
+                        toInstant(rs.getObject("ends_at", LocalDateTime.class))))
                 .list();
     }
 
@@ -167,6 +174,24 @@ public class RoomRepository {
                         """)
                 .param("now", LocalDateTime.ofInstant(now, ZoneOffset.UTC))
                 .param("phase", RoomPhase.OPTIONS_READY.name())
+                .param("roomId", roomId.toString())
+                .update();
+    }
+
+    /**
+     * A12 확정·재선택: 포인터를 새 선택으로 바꾸고, 단계를 REGION_CONFIRMED로, revision +1.
+     * 첫 확정이면 방 전체 입력도 잠근다 (inputs_closed_at은 처음 한 번만 채워짐).
+     */
+    public void confirmSelection(UUID roomId, UUID selectionId, Instant now) {
+        jdbc.sql("""
+                        UPDATE room
+                           SET current_selection_id = :selectionId, phase = :phase, revision = revision + 1,
+                               inputs_closed_at = COALESCE(inputs_closed_at, :now)
+                         WHERE room_id = :roomId
+                        """)
+                .param("selectionId", selectionId.toString())
+                .param("phase", RoomPhase.REGION_CONFIRMED.name())
+                .param("now", LocalDateTime.ofInstant(now, ZoneOffset.UTC))
                 .param("roomId", roomId.toString())
                 .update();
     }
