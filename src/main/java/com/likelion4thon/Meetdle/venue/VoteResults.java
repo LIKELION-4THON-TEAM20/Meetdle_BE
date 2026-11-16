@@ -9,7 +9,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Repository;
 
@@ -89,6 +91,76 @@ class VoteResults {
         return next;
     }
 
+    void resolve(Round round, long revision, List<PlaceVoting.TieChoice> choices, Instant now) {
+        var ties = ties(round);
+        if (ties == null || ties.resultRevision() != revision) {
+            throw PlaceRegistration.conflict("STALE_RESULT");
+        }
+        var winners = new EnumMap<Category, UUID>(Category.class);
+        if (choices == null || choices.size() != ties.groups().size() || choices.isEmpty()) {
+            throw new VenueException(400, "INVALID_TIE_CHOICE");
+        }
+        for (var choice : choices) {
+            if (choice == null || choice.category() == null || choice.candidateId() == null
+                    || ties.groups().stream().noneMatch(group -> group.category() == choice.category()
+                        && group.candidates().stream().anyMatch(place -> place.candidateId().equals(choice.candidateId())))
+                    || winners.putIfAbsent(choice.category(), choice.candidateId()) != null) {
+                throw new VenueException(400, "INVALID_TIE_CHOICE");
+            }
+        }
+        store.jdbc().update("""
+                UPDATE result_place SET result_status = 'ELIGIBLE'
+                WHERE room_id = ? AND round_no = ? AND result_status = 'TIED'
+                """, round.room(), round.number());
+        for (UUID winner : winners.values()) {
+            store.jdbc().update("""
+                    UPDATE result_place SET result_status = 'SELECTED'
+                    WHERE room_id = ? AND round_no = ? AND candidate_id = ?
+                    """, round.room(), round.number(), winner.toString());
+        }
+        var order = resultPlaces(round).stream().filter(place -> "SELECTED".equals(place.status()))
+                .sorted(Comparator.comparingInt(place -> VISIT_ORDER.indexOf(place.place().place().category())))
+                .map(place -> place.place().candidateId()).toList();
+        saveOrder(round, order);
+        store.jdbc().update("""
+                UPDATE venue_result SET finalized_at = ?, result_revision = result_revision + 1
+                WHERE room_id = ? AND round_no = ?
+                """, utc(now), round.room(), round.number());
+    }
+
+    boolean reorder(Round round, long revision, List<UUID> order) {
+        var result = finalized(round);
+        if (result == null || result.resultRevision() != revision) {
+            throw PlaceRegistration.conflict("STALE_RESULT");
+        }
+        var current = result.visitOrder();
+        if (order == null || order.size() != current.size() || order.stream().anyMatch(Objects::isNull)
+                || !new HashSet<>(current).equals(new HashSet<>(order))) {
+            throw new VenueException(400, "INVALID_VISIT_ORDER");
+        }
+        if (current.equals(order)) {
+            return false;
+        }
+        saveOrder(round, order);
+        store.jdbc().update("""
+                UPDATE venue_result SET result_revision = result_revision + 1
+                WHERE room_id = ? AND round_no = ?
+                """, round.room(), round.number());
+        return true;
+    }
+
+    private void saveOrder(Round round, List<UUID> order) {
+        store.jdbc().update("""
+                UPDATE result_place SET visit_position = NULL WHERE room_id = ? AND round_no = ?
+                """, round.room(), round.number());
+        for (int index = 0; index < order.size(); index++) {
+            store.jdbc().update("""
+                    UPDATE result_place SET visit_position = ?
+                    WHERE room_id = ? AND round_no = ? AND candidate_id = ?
+                    """, index + 1, round.room(), round.number(), order.get(index).toString());
+        }
+    }
+
     private List<ScoredCandidate> scores(Round round) {
         return store.jdbc().query("""
                 SELECT b.candidate_id, c.category, b.mode,
@@ -130,16 +202,19 @@ class VoteResults {
     }
 
     TieDecision ties(Round round) {
-        Long revision = store.jdbc().queryForObject("""
+        var revisions = store.jdbc().query("""
                 SELECT result_revision FROM venue_result WHERE room_id = ? AND round_no = ? AND finalized_at IS NULL
-                """, Long.class, round.room(), round.number());
+                """, (rs, row) -> rs.getLong(1), round.room(), round.number());
+        if (revisions.isEmpty()) {
+            return null;
+        }
         var groups = new EnumMap<Category, List<ResultPlace>>(Category.class);
         for (var place : resultPlaces(round)) {
             if ("TIED".equals(place.status())) {
                 groups.computeIfAbsent(place.place().place().category(), ignored -> new ArrayList<>()).add(place.place());
             }
         }
-        return new TieDecision(round.number(), revision, groups.entrySet().stream()
+        return new TieDecision(round.number(), revisions.get(0), groups.entrySet().stream()
                 .map(entry -> new TieGroup(entry.getKey(), entry.getValue())).toList());
     }
 

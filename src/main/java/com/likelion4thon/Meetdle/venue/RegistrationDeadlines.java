@@ -40,9 +40,11 @@ class RegistrationDeadlines {
         advanceRooms(due, registration::advanceDeadline);
         var votingDue = store.jdbc().query("""
                 SELECT v.room_id FROM venue_round v
+                JOIN room r ON r.room_id = v.room_id
                 WHERE v.round_no = (SELECT MAX(latest.round_no) FROM venue_round latest WHERE latest.room_id = v.room_id)
                   AND ((v.vote_closed_at IS NULL AND v.vote_closes_at <= ?)
-                    OR v.recovery_reason = 'NO_ELIGIBLE_RESULT')
+                    OR v.recovery_reason = 'NO_ELIGIBLE_RESULT'
+                    OR r.phase = 'WAITING_FOR_HOST_DECISION')
                 """, (rs, row) -> UUID.fromString(rs.getString(1)), RegistrationStore.utc(Instant.now()));
         advanceRooms(votingDue, voting::advanceDeadline);
     }

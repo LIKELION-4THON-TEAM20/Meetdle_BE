@@ -38,10 +38,17 @@ class RegistrationStateReader implements VenueStateReader {
         }
         if (context.phase() == FINAL_PLACE_CONFIRMED) {
             var result = store.latest(context.roomId()).map(results::finalized).orElse(null);
+            if (host && result != null) {
+                actions.add(Action.REORDER_VISIT);
+            }
             return new VenueState(null, null, null, null, result, null, actions);
         }
-        if (context.phase() == WAITING_FOR_HOST_DECISION && host) {
+        if (context.phase() == WAITING_FOR_HOST_DECISION && host
+                && meetingAt != null && context.now().isBefore(meetingAt)) {
             var ties = store.latest(context.roomId()).map(results::ties).orElse(null);
+            if (ties != null) {
+                actions.add(Action.RESOLVE_TIES);
+            }
             return new VenueState(null, null, null, ties, null, null, actions);
         }
         if (context.phase() == VOTE_REVIEW_REQUIRED) {

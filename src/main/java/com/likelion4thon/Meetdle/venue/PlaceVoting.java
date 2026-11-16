@@ -41,6 +41,42 @@ class PlaceVoting {
         this.events = events;
     }
 
+    record TieChoice(Category category, UUID candidateId) {}
+    record ResolveTies(int round, long resultRevision, List<TieChoice> choices) {}
+    record ReorderVisit(int round, long resultRevision, List<UUID> candidateIds) {}
+
+    void resolveTies(UUID roomId, UUID userId, ResolveTies request) {
+        var access = registration.access();
+        var lock = access.lockForWrite(roomId, new UserActor(userId));
+        var snapshot = lock.snapshot();
+        host(snapshot);
+        var round = resultRound(snapshot, request.round(), WAITING_FOR_HOST_DECISION);
+        if (!snapshot.now().isBefore(meeting(snapshot).meetingAt())) {
+            throw conflict("DEADLINE_PASSED");
+        }
+        results.resolve(round, request.resultRevision(), request.choices(), snapshot.now());
+        access.recordChange(lock, FINAL_PLACE_CONFIRMED);
+    }
+
+    void reorderVisit(UUID roomId, UUID userId, ReorderVisit request) {
+        var access = registration.access();
+        var lock = access.lockForWrite(roomId, new UserActor(userId));
+        var snapshot = lock.snapshot();
+        host(snapshot);
+        var round = resultRound(snapshot, request.round(), FINAL_PLACE_CONFIRMED);
+        if (results.reorder(round, request.resultRevision(), request.candidateIds())) {
+            access.recordChange(lock, FINAL_PLACE_CONFIRMED);
+        }
+    }
+
+    private Round resultRound(RoomVenueSnapshot snapshot, int round, RoomPhase expectedPhase) {
+        if (snapshot.phase() != expectedPhase) {
+            throw conflict("WRONG_PHASE");
+        }
+        return store.latest(snapshot.roomId()).filter(current -> current.number() == round)
+                .orElseThrow(() -> conflict("STALE_RESULT"));
+    }
+
     void start(UUID room, UUID user, UUID key, Start request) {
         var access = registration.access();
         var lock = access.lockForWrite(room, new UserActor(user));
@@ -244,6 +280,12 @@ class PlaceVoting {
             return;
         }
         var now = snapshot.now();
+        if (snapshot.phase() == WAITING_FOR_HOST_DECISION) {
+            if (!now.isBefore(meeting(snapshot).meetingAt())) {
+                access.recordChange(lock, ENDED);
+            }
+            return;
+        }
         if (snapshot.phase() == RECOVERY_REQUIRED) {
             if (!canRecollect(meeting(snapshot).meetingAt(), now)) {
                 setRecovery(round, RecoveryReason.INSUFFICIENT_TIME);

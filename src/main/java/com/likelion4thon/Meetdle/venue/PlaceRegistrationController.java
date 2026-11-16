@@ -24,6 +24,20 @@ class PlaceRegistrationController {
         this.voting = voting;
     }
 
+    @PutMapping("/result/selections")
+    ResponseEntity<Void> resolveTies(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestBody PlaceVoting.ResolveTies request) {
+        voting.resolveTies(roomId, user.userId(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/result/visit-order")
+    ResponseEntity<Void> reorderVisit(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestBody PlaceVoting.ReorderVisit request) {
+        voting.reorderVisit(roomId, user.userId(), request);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/voting")
     ResponseEntity<Void> startVoting(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
             @RequestHeader("Idempotency-Key") UUID key, @RequestBody PlaceVoting.Start request) {
