@@ -39,7 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:registration;MODE=MySQL;DB_CLOSE_DELAY=-1",
-        "meetdle.invite.hmac-key=registration-test-signing-key"
+        "meetdle.invite.hmac-key=dGVzdC1vbmx5LWhtYWMta2V5LTMyLWJ5dGVzLWxvbmc="
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
