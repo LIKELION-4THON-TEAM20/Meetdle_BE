@@ -30,10 +30,13 @@ meetdle.seoul-metro.service-key=
 meetdle.web-push.vapid-public-key=
 meetdle.web-push.vapid-private-key=
 
+# -------- Swagger ---------
 # Run from the project root: .\gradlew.bat bootRun --args='--spring.profiles.active=local'
-# Local frontend origin (no trailing slash)
+springdoc.api-docs.enabled=true
+springdoc.swagger-ui.enabled=true
+
+# For Local
 meetdle.frontend.origin=http://localhost:5173
-# For local HTTP only
 server.servlet.session.cookie.secure=false
 
 # ODsay 대중교통 API 키 (A: 역 목록·이동시간). lab.odsay.com에서 Server 플랫폼으로 발급
