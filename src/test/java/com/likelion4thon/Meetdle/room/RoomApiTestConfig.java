@@ -13,8 +13,9 @@ import org.springframework.security.web.SecurityFilterChain;
 /**
  * room API 테스트 공통 설정.
  * 1) 시계: 2030-01-01T00:00Z에서 시작하는 MutableClock (각 테스트 시작 때 다시 맞춘다)
- * 2) 보안: 창환님 SecurityConfiguration은 아직 모든 요청을 막는다(denyAll).
- *    테스트에서만 A06은 누구나, 나머지 /api/** 는 로그인하면 통과하도록 앞에 끼운다. 운영 코드는 건드리지 않는다.
+ * 2) 보안: A06은 누구나, 나머지 /api/** 는 로그인하면 통과하는 단순한 테스트용 보안 설정을 앞에 끼운다.
+ *    (로그인 안 한 요청이 401로 오는지 같은 것을 일정하게 확인하려고)
+ *    운영 보안 설정이 A 경로를 실제로 열어 두었는지는 auth/ARouteSecurityTests가 따로 확인한다.
  */
 @TestConfiguration
 public class RoomApiTestConfig {
