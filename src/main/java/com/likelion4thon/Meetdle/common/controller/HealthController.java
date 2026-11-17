@@ -1,4 +1,4 @@
-package com.likelion4thon.Meetdle;
+package com.likelion4thon.Meetdle.common.controller;
 
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
