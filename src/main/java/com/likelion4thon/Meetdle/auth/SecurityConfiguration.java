@@ -69,7 +69,15 @@ class SecurityConfiguration {
                 .csrf(config -> config.csrfTokenRepository(csrf))
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers(HttpMethod.GET, "/api/auth/kakao/start", "/api/auth/kakao/callback").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/me").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**",
+                                "/v3/api-docs", "/v3/api-docs/swagger-config", "/v3/api-docs.yaml").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/health", "/api/invitations/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/me", "/api/rooms", "/api/rooms/*/state",
+                                "/api/stations").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/rooms", "/api/rooms/*/join",
+                                "/api/invitations/resolve", "/api/rooms/*/planning-options").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/rooms/*/inputs/me",
+                                "/api/rooms/*/meeting-selection").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/rooms/*/places/search",
                                 "/api/rooms/*/place-submission/categories").authenticated()
@@ -78,7 +86,8 @@ class SecurityConfiguration {
                                 "/api/rooms/*/voting/decision", "/api/rooms/*/recovery").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/rooms/*/place-submission/me/*",
                                 "/api/rooms/*/place-submission/closure", "/api/rooms/*/preferences/me",
-                                "/api/rooms/*/vote-submissions/me").authenticated()
+                                "/api/rooms/*/vote-submissions/me", "/api/rooms/*/result/selections",
+                                "/api/rooms/*/result/visit-order").authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint((request, response, failure) -> unauthenticated(response))
