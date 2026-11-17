@@ -1,10 +1,14 @@
 package com.likelion4thon.Meetdle.planning.options;
 
+import com.likelion4thon.Meetdle.common.dedup.Idempotency;
 import com.likelion4thon.Meetdle.common.error.ApiException;
+import com.likelion4thon.Meetdle.contract.CommandDedup;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.RoomMember;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.planning.PlanningStateReader.PlanningOptions;
+import com.likelion4thon.Meetdle.planning.options.dto.PlanningOptionsRequest;
+import com.likelion4thon.Meetdle.planning.options.dto.PlanningOptionsResponse;
 import com.likelion4thon.Meetdle.planning.station.StationRepository;
 import com.likelion4thon.Meetdle.planning.station.StationRepository.CatalogStation;
 import com.likelion4thon.Meetdle.planning.subway.SubwayRouter;
@@ -40,10 +44,13 @@ import java.util.stream.Collectors;
  *
  * 순서
  * 1) 방 잠금 → 방장인지 확인
- * 2) 이미 계산한 결과가 있으면 그대로 200
+ * 2) 이미 계산한 결과가 있으면: 같은 입력 버전이면 그대로 200, 다른 버전이면 409 STALE_INPUT
  * 3) 단계·입력 버전·완료자 2명 이상 확인
  * 4) 일시 후보(최대 3) + 지역 후보(최대 2) 계산 → 하나라도 없으면 409 NO_FEASIBLE_OPTION (아무것도 안 바뀜)
  * 5) 저장 + 가입 마감 + 단계 OPTIONS_READY → 201
+ *
+ * HTTP 요청은 번호표(Idempotency-Key)를 방 잠금 안에서 확인한다.
+ * 같은 키+같은 본문 → 처음 응답 그대로, 같은 키+다른 본문(예: inputVersion 3 → 4) → 409 KEY_REUSED
  */
 @Service
 public class PlanningOptionsService {
@@ -56,10 +63,15 @@ public class PlanningOptionsService {
     private final PlanningOptionsRepository optionsRepository;
     private final SubwayRouter router;
     private final Clock clock;
+    private final CommandDedup commandDedup;
+    private final Idempotency idempotency;
 
     public PlanningOptionsService(RoomRepository roomRepository, MemberInputRepository inputRepository,
                                   StationRepository stationRepository, PlanningOptionsRepository optionsRepository,
-                                  SubwayRouter router, Clock clock) {
+                                  SubwayRouter router, Clock clock, CommandDedup commandDedup,
+                                  Idempotency idempotency) {
+        this.commandDedup = commandDedup;
+        this.idempotency = idempotency;
         this.roomRepository = roomRepository;
         this.inputRepository = inputRepository;
         this.stationRepository = stationRepository;
@@ -71,9 +83,28 @@ public class PlanningOptionsService {
     /** @param created true면 이번에 새로 계산(201), false면 저장된 결과 재사용(200) */
     public record Result(PlanningOptions options, boolean created) {}
 
+    /** A11 HTTP 요청용: 방장 확인 뒤, 번호표를 확인하고 계산한다. */
+    @Transactional
+    public CommandDedup.Response calculate(AuthenticatedUser user, UUID roomId, PlanningOptionsRequest request,
+                                           UUID idempotencyKey) {
+        LockedRoomRow room = lockAsHost(user, roomId);
+        CommandDedup.Key key = new CommandDedup.Key(user.userId(),
+                "/api/rooms/" + roomId + "/planning-options", idempotencyKey);
+        return commandDedup.execute(key, idempotency.hash(request), () -> {
+            Result result = calculateLocked(room, request.inputVersion());
+            return idempotency.response(result.created() ? HttpStatus.CREATED : HttpStatus.OK, null,
+                    PlanningOptionsResponse.from(result.options()));
+        });
+    }
+
+    /** 번호표 없이 계산 (테스트·내부용). */
     @Transactional
     public Result calculate(AuthenticatedUser user, UUID roomId, long inputVersion) {
-        // 1) 방 잠금 → 방장 확인
+        return calculateLocked(lockAsHost(user, roomId), inputVersion);
+    }
+
+    /** 1) 방 잠금 → 방장 확인 */
+    private LockedRoomRow lockAsHost(AuthenticatedUser user, UUID roomId) {
         LockedRoomRow room = roomRepository.lockRoom(roomId)
                 .orElseThrow(() -> ApiException.of(HttpStatus.NOT_FOUND, "NOT_FOUND", "방을 찾을 수 없어요."));
         RoomMember me = roomRepository.findMember(roomId, user.userId())
@@ -81,10 +112,19 @@ public class PlanningOptionsService {
         if (me.role() != RoomMember.Role.HOST) {
             throw ApiException.of(HttpStatus.FORBIDDEN, "FORBIDDEN", "방장만 추천을 계산할 수 있어요.");
         }
+        return room;
+    }
 
-        // 2) 재시도: 저장된 결과 그대로
+    private Result calculateLocked(LockedRoomRow room, long inputVersion) {
+        UUID roomId = room.roomId();
+
+        // 2) 재시도: 같은 입력 버전이면 저장된 결과 그대로 (명세: "200 같은 버전 재사용")
         Optional<PlanningOptions> existing = optionsRepository.find(roomId);
         if (existing.isPresent()) {
+            if (existing.get().inputVersion() != inputVersion) {
+                // 예: 버전 3으로 계산해 둔 방에 버전 4로 요청 → 다시 계산하지 않으므로 거절
+                throw staleInput(room);
+            }
             return new Result(existing.get(), false);
         }
 
@@ -94,9 +134,7 @@ public class PlanningOptionsService {
         }
         if (inputVersion != room.inputVersion()) {
             // 예: 방장 화면은 버전 5를 보고 있는데 그사이 누가 입력을 바꿔서 6이 됨
-            throw new ApiException(HttpStatus.CONFLICT, "STALE_INPUT",
-                    "그사이 입력이 바뀌었어요. 새로고침 후 다시 시도해 주세요.",
-                    Map.of("currentInputVersion", room.inputVersion()));
+            throw staleInput(room);
         }
         List<MemberInputRow> completed = inputRepository.findCompletedInRoom(roomId);
         if (completed.size() < MIN_COMPLETED_INPUTS) {
@@ -135,6 +173,12 @@ public class PlanningOptionsService {
                 participantIds, slots, picks);
         roomRepository.startPlanning(roomId, now);
         return new Result(optionsRepository.find(roomId).orElseThrow(), true);
+    }
+
+    private static ApiException staleInput(LockedRoomRow room) {
+        return new ApiException(HttpStatus.CONFLICT, "STALE_INPUT",
+                "그사이 입력이 바뀌었어요. 새로고침 후 다시 시도해 주세요.",
+                Map.of("currentInputVersion", room.inputVersion()));
     }
 
     /** 참가자 ID → 가능한 칸들(서울 시각). 예: {참가자1: [1/2 19:00, 1/2 20:00]} */

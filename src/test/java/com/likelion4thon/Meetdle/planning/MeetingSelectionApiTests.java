@@ -82,6 +82,7 @@ class MeetingSelectionApiTests {
         String body = mockMvc.perform(post("/api/rooms/" + ROOM + "/planning-options")
                         .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))
                         .with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"inputVersion\":0}"))
                 .andExpect(status().isCreated())

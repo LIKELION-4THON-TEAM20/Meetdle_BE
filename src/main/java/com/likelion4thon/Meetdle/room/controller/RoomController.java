@@ -1,6 +1,8 @@
 package com.likelion4thon.Meetdle.room.controller;
 
+import com.likelion4thon.Meetdle.common.dedup.Idempotency;
 import com.likelion4thon.Meetdle.common.error.ApiException;
+import com.likelion4thon.Meetdle.contract.CommandDedup;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomRequest;
 import com.likelion4thon.Meetdle.room.dto.CreateRoomResponse;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,10 +40,14 @@ public class RoomController {
     private final RoomService roomService;
     private final MyRoomsService myRoomsService;
     private final RoomStateService roomStateService;
+    private final CommandDedup commandDedup;
+    private final Idempotency idempotency;
 
     public RoomController(RoomService roomService, MyRoomsService myRoomsService,
-                          RoomStateService roomStateService) {
+                          RoomStateService roomStateService, CommandDedup commandDedup, Idempotency idempotency) {
         this.roomStateService = roomStateService;
+        this.commandDedup = commandDedup;
+        this.idempotency = idempotency;
         this.roomService = roomService;
         this.myRoomsService = myRoomsService;
     }
@@ -50,15 +57,23 @@ public class RoomController {
      * 본문: {"roomId":"...","invite":{"code":"K7P2QX","inviteUrl":"...","expiresAt":"..."}}
      * Location 헤더(/api/rooms/{roomId}/state)는 명세에 없지만 편의로 함께 준다.
      *
-     * TODO(멱등성): Idempotency-Key 헤더 처리는 CommandDedup 구현 후 붙인다.
+     * Idempotency-Key 헤더 필수. 같은 키+같은 본문으로 다시 보내면 방을 또 만들지 않고 처음 응답을 그대로 준다.
+     * 같은 키+다른 본문 → 409 KEY_REUSED
      */
     @PostMapping
-    public ResponseEntity<CreateRoomResponse> createRoom(
+    public ResponseEntity<String> createRoom(
             @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestHeader(value = Idempotency.HEADER, required = false) String idempotencyKey,
             @Valid @RequestBody CreateRoomRequest request
     ) {
-        CreateRoomResponse response = roomService.createRoom(requireLogin(user), request);
-        return ResponseEntity.created(URI.create("/api/rooms/" + response.roomId() + "/state")).body(response);
+        AuthenticatedUser me = requireLogin(user);
+        CommandDedup.Key key = new CommandDedup.Key(me.userId(), "/api/rooms", Idempotency.parseKey(idempotencyKey));
+        CommandDedup.Response response = commandDedup.execute(key, idempotency.hash(request), () -> {
+            CreateRoomResponse created = roomService.createRoom(me, request);
+            return idempotency.response(HttpStatus.CREATED,
+                    URI.create("/api/rooms/" + created.roomId() + "/state"), created);
+        });
+        return Idempotency.toEntity(response);
     }
 
     /**

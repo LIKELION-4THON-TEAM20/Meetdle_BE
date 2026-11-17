@@ -120,6 +120,68 @@ class PlanningOptionsApiTests {
     }
 
     @Test
+    void sameKeyAndBodyReplaysFirstResponseWithoutRecalculating() throws Exception {
+        complete(HOST_PID, "강남", "강남", "2030-01-02", 19);
+        complete(MEMBER_PID, "홍대입구", "홍대입구", "2030-01-02", 19);
+        String key = UUID.randomUUID().toString();
+
+        String first = calculate(HOST, 0, key).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        // 응답이 사라져서 앱이 같은 번호표로 다시 보냄 → 처음 응답(201) 그대로
+        String again = calculate(HOST, 0, key).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(again).isEqualTo(first);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM planning_options", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT revision FROM room WHERE room_id = ?", Long.class, ROOM))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void sameKeyWithDifferentBodyIsKeyReused() throws Exception {
+        complete(HOST_PID, "강남", "강남", "2030-01-02", 19);
+        complete(MEMBER_PID, "홍대입구", "홍대입구", "2030-01-02", 19);
+        String key = UUID.randomUUID().toString();
+
+        calculate(HOST, 0, key).andExpect(status().isCreated());
+        calculate(HOST, 1, key)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("KEY_REUSED"));
+    }
+
+    @Test
+    void savedOptionsAreReusedOnlyForSameInputVersion() throws Exception {
+        complete(HOST_PID, "강남", "강남", "2030-01-02", 19);
+        complete(MEMBER_PID, "홍대입구", "홍대입구", "2030-01-02", 19);
+
+        calculate(HOST, 0).andExpect(status().isCreated());
+        // 새 번호표 + 다른 버전 → 다시 계산하지 않으니 거절 (명세: "200 같은 버전 재사용")
+        calculate(HOST, 5)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("STALE_INPUT"))
+                .andExpect(jsonPath("$.details.currentInputVersion").value(0));
+    }
+
+    @Test
+    void missingOrBrokenIdempotencyKeyIs400() throws Exception {
+        complete(HOST_PID, "강남", "강남", "2030-01-02", 19);
+        complete(MEMBER_PID, "홍대입구", "홍대입구", "2030-01-02", 19);
+
+        mockMvc.perform(post("/api/rooms/" + ROOM + "/planning-options")
+                        .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"inputVersion\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.details['Idempotency-Key']").exists());
+        calculate(HOST, 0, "not-a-uuid")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM planning_options", Integer.class)).isZero();
+    }
+
+    @Test
     void onlyCompletedMembersAreFrozen() throws Exception {
         // 참가자2는 입력 중(완료 안 함) → 계산에서 빠지고, 안 되는 사람 목록에도 안 나온다
         complete(HOST_PID, "강남", "강남", "2030-01-02", 19);
@@ -217,12 +279,14 @@ class PlanningOptionsApiTests {
         mockMvc.perform(post("/api/rooms/" + UUID.randomUUID() + "/planning-options")
                         .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))
                         .with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"inputVersion\":0}"))
                 .andExpect(status().isNotFound());
         mockMvc.perform(post("/api/rooms/" + ROOM + "/planning-options")
                         .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))
                         .with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
@@ -230,9 +294,15 @@ class PlanningOptionsApiTests {
     }
 
     private ResultActions calculate(AuthenticatedUser user, long inputVersion) throws Exception {
+        return calculate(user, inputVersion, UUID.randomUUID().toString());
+    }
+
+    private ResultActions calculate(AuthenticatedUser user, long inputVersion, String idempotencyKey)
+            throws Exception {
         return mockMvc.perform(post("/api/rooms/" + ROOM + "/planning-options")
                 .with(authentication(new TestingAuthenticationToken(user, null, "ROLE_USER")))
                 .with(csrf())
+                .header("Idempotency-Key", idempotencyKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"inputVersion\":" + inputVersion + "}"));
     }
