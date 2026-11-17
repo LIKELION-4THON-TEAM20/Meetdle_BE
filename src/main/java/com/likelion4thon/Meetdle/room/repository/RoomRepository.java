@@ -196,6 +196,55 @@ public class RoomRepository {
                 .update();
     }
 
+    /** A08 방 상태 조회용 방 한 줄 (잠그지 않음). */
+    public Optional<RoomStateRow> findStateRow(UUID roomId) {
+        return jdbc.sql("""
+                        SELECT room_id, title, starts_on, ends_on, capacity, phase, revision, input_version,
+                               join_closed_at, inputs_closed_at
+                          FROM room WHERE room_id = :roomId
+                        """)
+                .param("roomId", roomId.toString())
+                .query((rs, rowNum) -> new RoomStateRow(
+                        UUID.fromString(rs.getString("room_id")),
+                        rs.getString("title"),
+                        rs.getObject("starts_on", LocalDate.class),
+                        rs.getObject("ends_on", LocalDate.class),
+                        rs.getInt("capacity"),
+                        RoomPhase.valueOf(rs.getString("phase")),
+                        rs.getLong("revision"),
+                        rs.getLong("input_version"),
+                        toInstant(rs.getObject("join_closed_at", LocalDateTime.class)),
+                        toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class))))
+                .optional();
+    }
+
+    /** A08 회원 목록 + 각자 입력 완료 여부. 들어온 순서대로. 예: [방장(완료), 참가자(입력 중)] */
+    public List<MemberStatusRow> findMemberStatuses(UUID roomId) {
+        return jdbc.sql("""
+                        SELECT m.participant_id, m.user_id, m.nickname, m.role,
+                               CASE WHEN i.completed_at IS NULL THEN FALSE ELSE TRUE END AS input_complete
+                          FROM room_member m
+                          LEFT JOIN member_input i ON i.participant_id = m.participant_id
+                         WHERE m.room_id = :roomId
+                         ORDER BY m.joined_at, m.participant_id
+                        """)
+                .param("roomId", roomId.toString())
+                .query((rs, rowNum) -> new MemberStatusRow(
+                        UUID.fromString(rs.getString("participant_id")),
+                        UUID.fromString(rs.getString("user_id")),
+                        rs.getString("nickname"),
+                        RoomMember.Role.valueOf(rs.getString("role")),
+                        rs.getBoolean("input_complete")))
+                .list();
+    }
+
+    public record RoomStateRow(UUID roomId, String title, LocalDate startsOn, LocalDate endsOn, int capacity,
+                               RoomPhase phase, long revision, long inputVersion,
+                               Instant joinClosedAt, Instant inputsClosedAt) {}
+
+    public record MemberStatusRow(UUID participantId, UUID userId, String nickname, RoomMember.Role role,
+                                  boolean inputComplete) {}
+
     public int countMembers(UUID roomId) {
         return jdbc.sql("SELECT COUNT(*) FROM room_member WHERE room_id = :roomId")
                 .param("roomId", roomId.toString())

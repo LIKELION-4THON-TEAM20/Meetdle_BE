@@ -168,6 +168,20 @@ public class MemberInputService {
         }
     }
 
+    /** A08: 내 조건 읽기. 아직 저장한 적 없으면 빈 입력(버전 0). */
+    @Transactional(readOnly = true)
+    public MyInput readMyInput(UUID participantId) {
+        MemberInputRow row = inputRepository.find(participantId).orElse(MemberInputRow.empty(participantId));
+        Set<UUID> stationIds = new HashSet<>();
+        if (row.originStationId() != null) {
+            stationIds.add(row.originStationId());
+        }
+        if (row.destinationStationId() != null) {
+            stationIds.add(row.destinationStationId());
+        }
+        return toMyInput(row, inputRepository.findSlots(participantId), stationRepository.findByIds(stationIds));
+    }
+
     private static MyInput toMyInput(MemberInputRow row, List<HourSlot> slots, Map<UUID, CatalogStation> stations) {
         return new MyInput(stationOf(row.originStationId(), stations), stationOf(row.destinationStationId(), stations),
                 slots, row.inputRevision(), row.completedAt());

@@ -7,8 +7,10 @@ import com.likelion4thon.Meetdle.room.dto.CreateRoomResponse;
 import com.likelion4thon.Meetdle.room.dto.JoinRoomRequest;
 import com.likelion4thon.Meetdle.room.dto.MyRoomsPage;
 import com.likelion4thon.Meetdle.room.dto.RoomRef;
+import com.likelion4thon.Meetdle.room.dto.RoomState;
 import com.likelion4thon.Meetdle.room.service.MyRoomsService;
 import com.likelion4thon.Meetdle.room.service.RoomService;
+import com.likelion4thon.Meetdle.room.service.RoomStateService;
 import com.likelion4thon.Meetdle.room.service.RoomService.JoinResult;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -34,8 +36,11 @@ public class RoomController {
 
     private final RoomService roomService;
     private final MyRoomsService myRoomsService;
+    private final RoomStateService roomStateService;
 
-    public RoomController(RoomService roomService, MyRoomsService myRoomsService) {
+    public RoomController(RoomService roomService, MyRoomsService myRoomsService,
+                          RoomStateService roomStateService) {
+        this.roomStateService = roomStateService;
         this.roomService = roomService;
         this.myRoomsService = myRoomsService;
     }
@@ -85,6 +90,12 @@ public class RoomController {
         HttpSession session = httpRequest.getSession(false);
         JoinResult result = roomService.join(requireLogin(user), roomId, request.joinProof(), session);
         return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(result.room());
+    }
+
+    /** A08 GET /api/rooms/{roomId}/state → 200 RoomState (새로고침·재접속 때 화면 전체 복원) */
+    @GetMapping("/{roomId}/state")
+    public RoomState state(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID roomId) {
+        return roomStateService.read(requireLogin(user), roomId);
     }
 
     private static AuthenticatedUser requireLogin(AuthenticatedUser user) {

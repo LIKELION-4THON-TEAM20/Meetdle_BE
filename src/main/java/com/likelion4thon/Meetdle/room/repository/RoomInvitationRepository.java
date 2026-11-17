@@ -56,6 +56,19 @@ public class RoomInvitationRepository {
                 .optional();
     }
 
+    /** A08: 방장 화면에 다시 보여줄 초대 링크·코드 (암호문 그대로). */
+    public Optional<StoredInvite> findStoredByRoom(UUID roomId) {
+        return jdbc.sql("SELECT encrypted_token, encrypted_code, expires_at FROM room_invitation WHERE room_id = :roomId")
+                .param("roomId", roomId.toString())
+                .query((rs, rowNum) -> new StoredInvite(
+                        rs.getBytes("encrypted_token"),
+                        rs.getBytes("encrypted_code"),
+                        rs.getObject("expires_at", LocalDateTime.class).toInstant(ZoneOffset.UTC)))
+                .optional();
+    }
+
+    public record StoredInvite(byte[] encryptedToken, byte[] encryptedCode, java.time.Instant expiresAt) {}
+
     private static InvitationRow mapRow(ResultSet rs, int rowNum) throws SQLException {
         return new InvitationRow(
                 UUID.fromString(rs.getString("invitation_id")),
