@@ -34,6 +34,13 @@ class AuthFlowTests {
     KakaoClient kakao;
 
     @Test
+    void exposesHealthWithoutAuthentication() throws Exception {
+        mvc.perform(get("/api/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @Test
     void logsInThroughInviteAndRequiresCsrfForLogout() throws Exception {
         var session = new MockHttpSession();
         String oldSessionId = session.getId();
