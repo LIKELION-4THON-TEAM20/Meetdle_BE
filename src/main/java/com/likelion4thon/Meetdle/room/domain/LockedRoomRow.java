@@ -14,6 +14,7 @@ import java.util.UUID;
  * @param phase          방 진행 단계. 예: WAITING_FOR_DEPARTURE(조건 모으는 중)
  * @param inputVersion   누군가 입력을 바꿀 때마다 1씩 오르는 번호 (A11 계산 요청이 최신인지 확인)
  * @param currentSelectionId 지금 확정된 일시·지역 선택 (A12). null이면 아직 확정 전
+ * @param revision       방에 무슨 변화가 생길 때마다 1씩 오르는 번호
  */
 public record LockedRoomRow(
         UUID roomId,
@@ -24,5 +25,6 @@ public record LockedRoomRow(
         Instant inputsClosedAt,
         RoomPhase phase,
         long inputVersion,
-        UUID currentSelectionId
+        UUID currentSelectionId,
+        long revision
 ) {}

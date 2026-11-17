@@ -76,7 +76,7 @@ public class RoomRepository {
     public Optional<LockedRoomRow> lockRoom(UUID roomId) {
         return jdbc.sql("""
                         SELECT room_id, capacity, starts_on, ends_on, join_closed_at, inputs_closed_at,
-                               phase, input_version, current_selection_id
+                               phase, input_version, current_selection_id, revision
                           FROM room WHERE room_id = :roomId FOR UPDATE
                         """)
                 .param("roomId", roomId.toString())
@@ -90,7 +90,8 @@ public class RoomRepository {
                         RoomPhase.valueOf(rs.getString("phase")),
                         rs.getLong("input_version"),
                         rs.getString("current_selection_id") == null ? null
-                                : UUID.fromString(rs.getString("current_selection_id"))))
+                                : UUID.fromString(rs.getString("current_selection_id")),
+                        rs.getLong("revision")))
                 .optional();
     }
 
@@ -192,6 +193,17 @@ public class RoomRepository {
                 .param("selectionId", selectionId.toString())
                 .param("phase", RoomPhase.REGION_CONFIRMED.name())
                 .param("now", LocalDateTime.ofInstant(now, ZoneOffset.UTC))
+                .param("roomId", roomId.toString())
+                .update();
+    }
+
+    /**
+     * 장소(B) 쪽 변경 기록: 단계를 바꾸고 revision +1. 단계가 그대로여도 revision은 오른다.
+     * 예: 등록 마감 연장(단계 그대로) → revision 5 → 6
+     */
+    public void recordPhaseChange(UUID roomId, RoomPhase phase) {
+        jdbc.sql("UPDATE room SET phase = :phase, revision = revision + 1 WHERE room_id = :roomId")
+                .param("phase", phase.name())
                 .param("roomId", roomId.toString())
                 .update();
     }
