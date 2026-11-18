@@ -17,5 +17,27 @@ spring.datasource.password=여기에_내_MySQL_비밀번호
 meetdle.invite.hmac-key=여기에_base64_32바이트
 meetdle.invite.encryption-key=여기에_base64_32바이트
 
+# 카카오 Local 장소 검색/로그인
+meetdle.kakao.rest-api-key=
+# 카카오 로그인
+meetdle.kakao.client-secret=
+meetdle.kakao.redirect-uri=http://localhost:8080/api/auth/kakao/callback
+
+# 서울교통공사 최단경로.
+meetdle.seoul-metro.service-key=
+
+# Web Push
+meetdle.web-push.vapid-public-key=
+meetdle.web-push.vapid-private-key=
+
+# -------- Swagger ---------
+# Run from the project root: .\gradlew.bat bootRun --args='--spring.profiles.active=local'
+springdoc.api-docs.enabled=true
+springdoc.swagger-ui.enabled=true
+
+# For Local
+meetdle.frontend.origin=http://localhost:5173
+server.servlet.session.cookie.secure=false
+
 # ODsay 대중교통 API 키 (A: 역 목록·이동시간). lab.odsay.com에서 Server 플랫폼으로 발급
 meetdle.odsay.api-key=여기에_ODsay_키
