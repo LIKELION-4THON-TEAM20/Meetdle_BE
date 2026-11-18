@@ -10,4 +10,4 @@ CREATE TABLE vote_preference (
     CONSTRAINT fk_vote_preference_candidate FOREIGN KEY (room_id, round_no, candidate_id)
         REFERENCES ballot_candidate (room_id, round_no, candidate_id),
     CONSTRAINT ck_vote_preference_choice CHECK (choice IN ('LIKE', 'NEUTRAL', 'DISLIKE'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
