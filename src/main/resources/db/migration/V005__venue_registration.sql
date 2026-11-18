@@ -1,3 +1,4 @@
+-- Use the database defaults to match the room and room_member tables from V002.
 CREATE TABLE venue_round (
     room_id CHAR(36) NOT NULL,
     round_no SMALLINT NOT NULL,
@@ -16,7 +17,7 @@ CREATE TABLE venue_round (
     PRIMARY KEY (room_id, round_no),
     CONSTRAINT fk_venue_round_room FOREIGN KEY (room_id) REFERENCES room (room_id),
     CONSTRAINT ck_venue_round_vote_extension CHECK (vote_extension_count BETWEEN 0 AND 1)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE round_category (
     room_id CHAR(36) NOT NULL,
@@ -30,7 +31,7 @@ CREATE TABLE round_category (
     CONSTRAINT ck_round_category_value CHECK (category IN ('FOOD', 'CAFE', 'CULTURE', 'BAR')),
     CONSTRAINT ck_round_category_culture CHECK (category <> 'CULTURE' OR required = FALSE),
     CONSTRAINT ck_round_category_radius CHECK (radius_meters IN (2500, 3000))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE round_member (
     room_id CHAR(36) NOT NULL,
@@ -43,7 +44,7 @@ CREATE TABLE round_member (
     CONSTRAINT fk_round_member_round FOREIGN KEY (room_id, round_no) REFERENCES venue_round (room_id, round_no),
     CONSTRAINT fk_round_member_member FOREIGN KEY (room_id, participant_id)
         REFERENCES room_member (room_id, participant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE place_candidate (
     room_id CHAR(36) NOT NULL,
@@ -61,7 +62,7 @@ CREATE TABLE place_candidate (
     CONSTRAINT uq_place_candidate_category UNIQUE (room_id, round_no, candidate_id, category),
     CONSTRAINT fk_place_candidate_category FOREIGN KEY (room_id, round_no, category)
         REFERENCES round_category (room_id, round_no, category)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE place_nomination (
     room_id CHAR(36) NOT NULL,
@@ -75,7 +76,7 @@ CREATE TABLE place_nomination (
         REFERENCES round_member (room_id, round_no, participant_id),
     CONSTRAINT fk_place_nomination_candidate FOREIGN KEY (room_id, round_no, candidate_id, category)
         REFERENCES place_candidate (room_id, round_no, candidate_id, category)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE ballot_candidate (
     room_id CHAR(36) NOT NULL,
@@ -86,7 +87,7 @@ CREATE TABLE ballot_candidate (
     CONSTRAINT fk_ballot_candidate_place FOREIGN KEY (room_id, round_no, candidate_id)
         REFERENCES place_candidate (room_id, round_no, candidate_id),
     CONSTRAINT ck_ballot_candidate_mode CHECK (mode IN ('VOTE', 'AUTO_SELECTED'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE venue_result (
     room_id CHAR(36) NOT NULL,
@@ -97,7 +98,7 @@ CREATE TABLE venue_result (
     finalized_at DATETIME(6),
     PRIMARY KEY (room_id, round_no),
     CONSTRAINT fk_venue_result_round FOREIGN KEY (room_id, round_no) REFERENCES venue_round (room_id, round_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE result_place (
     room_id CHAR(36) NOT NULL,
@@ -114,4 +115,4 @@ CREATE TABLE result_place (
     CONSTRAINT fk_result_place_result FOREIGN KEY (room_id, round_no) REFERENCES venue_result (room_id, round_no),
     CONSTRAINT fk_result_place_candidate FOREIGN KEY (room_id, round_no, candidate_id)
         REFERENCES ballot_candidate (room_id, round_no, candidate_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
