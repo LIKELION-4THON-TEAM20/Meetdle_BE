@@ -1,6 +1,13 @@
 package com.likelion4thon.Meetdle.auth;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import com.likelion4thon.Meetdle.auth.kakao.KakaoClient;
+import com.likelion4thon.Meetdle.common.logging.RequestOperationLog;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -28,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.WebUtils;
 
+@Tag(name = "인증")
 @RestController
 class AuthController {
     private static final String ATTEMPT = AuthController.class.getName() + ".attempt";
@@ -48,13 +56,20 @@ class AuthController {
         this.frontendOrigin = frontendOrigin;
     }
 
+    @Operation(summary = "카카오 로그인 시작",
+            description = "브라우저에서 호출해 카카오 로그인 화면으로 이동. 초대 링크에서 진입한 경우 inviteToken 전달",
+            responses = {
+                @ApiResponse(responseCode = "302", description = "카카오 인증 화면으로 이동", content = @Content)
+            })
     @GetMapping("/api/auth/kakao/start")
-    ResponseEntity<?> start(@RequestParam(required = false) String inviteToken, HttpServletRequest request) {
+    ResponseEntity<?> start(
+            @Parameter(description = "로그인 후 초대 화면으로 돌아갈 때 사용할 URL 경로의 초대 토큰")
+            @RequestParam(required = false) String inviteToken, HttpServletRequest request) {
         if (inviteToken != null && !inviteToken.matches("[A-Za-z0-9_-]{43}")) {
-            return error(400, "INVALID_REQUEST", "Invalid invite token");
+            return error(request, 400, "INVALID_REQUEST", "Invalid invite token");
         }
         if (!kakao.configured()) {
-            return error(503, "PROVIDER_UNAVAILABLE", "Kakao login is unavailable");
+            return error(request, 503, "PROVIDER_UNAVAILABLE", "Kakao login is unavailable");
         }
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
@@ -67,20 +82,29 @@ class AuthController {
         return redirect(kakao.authorize(state));
     }
 
+    @Operation(summary = "카카오 로그인 콜백",
+            description = "카카오가 전달한 state와 code로 로그인 세션 생성. 성공 또는 취소 결과에 따라 프런트 화면으로 이동",
+            responses = {
+                @ApiResponse(responseCode = "302", description = "프런트 화면으로 이동", content = @Content)
+            })
     @GetMapping("/api/auth/kakao/callback")
-    ResponseEntity<?> callback(@RequestParam(required = false) String state,
-                               @RequestParam(required = false) String code,
-                               @RequestParam(required = false) String error,
+    ResponseEntity<?> callback(
+            @Parameter(description = "카카오 로그인 요청에서 발급한 세션 확인용 일회성 값")
+            @RequestParam(required = false) String state,
+                               @Parameter(description = "카카오 로그인 성공 시 전달되는 일회성 인가 코드")
+            @RequestParam(required = false) String code,
+                               @Parameter(description = "카카오 로그인 취소 또는 실패 시 전달되는 오류 코드", example = "access_denied")
+            @RequestParam(required = false) String error,
                                HttpServletRequest request, HttpServletResponse response) {
         var session = request.getSession(false);
         if (session == null) {
-            return invalidState();
+            return invalidState(request);
         }
         Attempt attempt;
         synchronized (WebUtils.getSessionMutex(session)) {
             if (!(session.getAttribute(ATTEMPT) instanceof Attempt pending)
                     || !pending.state().equals(state) || !Instant.now().isBefore(pending.expiresAt())) {
-                return invalidState();
+                return invalidState(request);
             }
             attempt = pending;
             session.removeAttribute(ATTEMPT);
@@ -88,17 +112,19 @@ class AuthController {
         String destination = frontendOrigin + attempt.path();
         if ((code == null) == (error == null) || (code != null && code.isBlank())
                 || (error != null && error.isBlank())) {
-            return error(400, "INVALID_REQUEST", "Expected a code or a provider error");
+            return error(request, 400, "INVALID_REQUEST", "Expected a code or a provider error");
         }
         if (error != null) {
-            return redirect(URI.create(destination + "?loginError="
-                    + ("access_denied".equals(error) ? "CANCELLED" : "PROVIDER_UNAVAILABLE")));
+            String result = "access_denied".equals(error) ? "CANCELLED" : "PROVIDER_UNAVAILABLE";
+            RequestOperationLog.setResultCode(request, result);
+            return redirect(URI.create(destination + "?loginError=" + result));
         }
 
         KakaoClient.Profile profile;
         try {
             profile = kakao.profile(code);
         } catch (RestClientException | IllegalStateException failure) {
+            RequestOperationLog.setResultCode(request, "PROVIDER_UNAVAILABLE");
             return redirect(URI.create(destination + "?loginError=PROVIDER_UNAVAILABLE"));
         }
         AuthenticatedUser user = account(profile);
@@ -108,6 +134,7 @@ class AuthController {
         context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(user, null, List.of()));
         SecurityContextHolder.setContext(context);
         contexts.saveContext(context, request, response);
+        RequestOperationLog.setResultCode(request, "AUTHENTICATED");
         return redirect(URI.create(destination));
     }
 
@@ -129,16 +156,23 @@ class AuthController {
         return new AuthenticatedUser(userId, profile.nickname());
     }
 
+    @Operation(summary = "내 로그인 세션 조회",
+            description = "로그인한 사용자 정보와 쓰기 요청의 X-CSRF-TOKEN 헤더에 사용할 csrfToken 조회",
+            responses = {
+                @ApiResponse(responseCode = "200", description = "로그인 사용자 정보 및 CSRF 토큰 반환", useReturnTypeSchema = true)
+            })
     @GetMapping("/api/me")
-    ResponseEntity<Session> me(@AuthenticationPrincipal AuthenticatedUser user, CsrfToken csrfToken) {
+    ResponseEntity<Session> me(@AuthenticationPrincipal AuthenticatedUser user,
+                               @Parameter(hidden = true) CsrfToken csrfToken) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Session(user, csrfToken.getToken()));
     }
 
-    private static ResponseEntity<?> invalidState() {
-        return error(400, "OAUTH_STATE_INVALID", "Invalid or expired OAuth state");
+    private static ResponseEntity<?> invalidState(HttpServletRequest request) {
+        return error(request, 400, "OAUTH_STATE_INVALID", "Invalid or expired OAuth state");
     }
 
-    private static ResponseEntity<?> error(int status, String code, String message) {
+    private static ResponseEntity<?> error(HttpServletRequest request, int status, String code, String message) {
+        RequestOperationLog.setResultCode(request, code);
         return ResponseEntity.status(status).cacheControl(CacheControl.noStore())
                 .body(Map.of("code", code, "message", message));
     }
@@ -148,5 +182,8 @@ class AuthController {
     }
 
     private record Attempt(String state, String path, Instant expiresAt) {}
-    private record Session(AuthenticatedUser user, String csrfToken) {}
+    private record Session(
+            @Schema(description = "현재 세션으로 로그인한 사용자 정보") AuthenticatedUser user,
+            @Schema(description = "같은 세션의 쓰기 요청에서 X-CSRF-TOKEN 헤더로 보낼 값") String csrfToken
+    ) {}
 }

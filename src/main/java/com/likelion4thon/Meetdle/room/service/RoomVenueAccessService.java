@@ -5,6 +5,7 @@ import com.likelion4thon.Meetdle.contract.RoomMember;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.contract.RoomVenueAccess;
 import com.likelion4thon.Meetdle.planning.MeetingQuery;
+import com.likelion4thon.Meetdle.room.RoomOperationLog;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository.MemberStatusRow;
@@ -99,6 +100,7 @@ public class RoomVenueAccessService implements RoomVenueAccess {
         }
         roomRepository.recordPhaseChange(lock.snapshot.roomId(), nextPhase);
         lock.phase = nextPhase;
+        RoomOperationLog.phaseChanged(lock.snapshot.roomId(), current, nextPhase);
     }
 
     private Instant now() {

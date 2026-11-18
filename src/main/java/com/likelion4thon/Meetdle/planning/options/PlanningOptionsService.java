@@ -13,6 +13,7 @@ import com.likelion4thon.Meetdle.planning.station.StationRepository;
 import com.likelion4thon.Meetdle.planning.station.StationRepository.CatalogStation;
 import com.likelion4thon.Meetdle.planning.subway.SubwayRouter;
 import com.likelion4thon.Meetdle.planning.subway.SubwayRouter.Route;
+import com.likelion4thon.Meetdle.room.RoomOperationLog;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.domain.MemberInputRow;
 import com.likelion4thon.Meetdle.room.repository.MemberInputRepository;
@@ -172,6 +173,7 @@ public class PlanningOptionsService {
         optionsRepository.insert(UUID.randomUUID(), roomId, room.inputVersion(), router.matrixVersion(), now,
                 participantIds, slots, picks);
         roomRepository.startPlanning(roomId, now);
+        RoomOperationLog.phaseChanged(roomId, room.phase(), RoomPhase.OPTIONS_READY);
         return new Result(optionsRepository.find(roomId).orElseThrow(), true);
     }
 
