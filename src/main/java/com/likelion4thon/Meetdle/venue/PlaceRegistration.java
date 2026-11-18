@@ -1,5 +1,6 @@
 package com.likelion4thon.Meetdle.venue;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomMember.Role;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
@@ -500,11 +501,33 @@ class PlaceRegistration {
 
     record CommandKey(String user, String path, String id, byte[] hash) {}
     enum ExtensionMode { MINI_TIMER, EXTEND }
-    record Open(UUID selectionId, List<Category> requiredCategories, Instant closesAt) {}
+    record Open(
+            @Schema(description = "방 상태의 meeting.selectionId")
+            UUID selectionId,
+            @Schema(description = "필수 방문 카테고리 목록. FOOD, CAFE, BAR 중 하나 이상을 중복 없이 지정")
+            List<Category> requiredCategories,
+            @Schema(description = "등록 마감 시각. ISO 8601 형식, 생략 시 서버가 허용하는 가장 이른 마감 시각 적용")
+            Instant closesAt
+    ) {}
     record Opened(int round, List<CategorySetting> categories, Instant closesAt) {}
-    record Nomination(int round, @com.fasterxml.jackson.annotation.JsonProperty(required = true) String pickToken) {}
-    record Completion(int round) {}
-    record Extension(int round, ExtensionMode mode, Instant closesAt) {}
+    record Nomination(
+            @Schema(description = "방 상태의 registration.round", example = "1")
+            int round,
+            @Schema(description = "카테고리가 일치하는 장소 검색 응답의 pickToken. 기존 후보 삭제 시 명시적으로 null 전달")
+            @com.fasterxml.jackson.annotation.JsonProperty(required = true) String pickToken
+    ) {}
+    record Completion(
+            @Schema(description = "완료 또는 조기 종료할 등록 라운드. 방 상태의 registration.round 사용", example = "1")
+            int round
+    ) {}
+    record Extension(
+            @Schema(description = "연장할 등록 라운드. 방 상태의 registration.round 사용", example = "1")
+            int round,
+            @Schema(description = "MINI_TIMER는 짧은 추가 타이머 적용, EXTEND는 종료된 등록 재개")
+            ExtensionMode mode,
+            @Schema(description = "변경할 마감 시각. ISO 8601 형식. EXTEND에는 필수, MINI_TIMER에서는 생략 가능")
+            Instant closesAt
+    ) {}
     record Extended(int round, Instant closesAt) {}
     record Availability(UUID selectionId, List<CategorySetting> categories) {}
     record Search(List<SearchItem> items, Integer nextPage, int radiusMeters, boolean expanded, boolean available) {}

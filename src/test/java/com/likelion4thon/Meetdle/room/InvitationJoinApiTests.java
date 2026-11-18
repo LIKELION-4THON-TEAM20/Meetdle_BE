@@ -277,6 +277,7 @@ class InvitationJoinApiTests {
 
     private CreatedRoom createRoom(int capacity) throws Exception {
         String body = mockMvc.perform(post("/api/rooms").with(loggedIn(BoundaryFixtures.HOST)).with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"title":"초대 테스트","dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":%d}

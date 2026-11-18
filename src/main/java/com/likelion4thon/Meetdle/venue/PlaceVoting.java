@@ -1,5 +1,6 @@
 package com.likelion4thon.Meetdle.venue;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomVenueAccess;
 import com.likelion4thon.Meetdle.contract.RoomVenueAccess.RoomVenueSnapshot;
@@ -41,9 +42,28 @@ class PlaceVoting {
         this.events = events;
     }
 
-    record TieChoice(Category category, UUID candidateId) {}
-    record ResolveTies(int round, long resultRevision, List<TieChoice> choices) {}
-    record ReorderVisit(int round, long resultRevision, List<UUID> candidateIds) {}
+    record TieChoice(
+            @Schema(description = "방 상태의 tieDecision에 표시된 동점 카테고리")
+            Category category,
+            @Schema(description = "해당 카테고리의 동점 후보 중 최종 방문할 장소 UUID")
+            UUID candidateId
+    ) {}
+    record ResolveTies(
+            @Schema(description = "방 상태의 tieDecision.round", example = "1")
+            int round,
+            @Schema(description = "방 상태의 tieDecision.resultRevision")
+            long resultRevision,
+            @Schema(description = "동점 카테고리마다 최종 선택한 후보 한 개씩을 담은 목록")
+            List<TieChoice> choices
+    ) {}
+    record ReorderVisit(
+            @Schema(description = "방 상태의 result.round", example = "1")
+            int round,
+            @Schema(description = "방 상태의 result.resultRevision")
+            long resultRevision,
+            @Schema(description = "확정된 모든 장소의 candidateId를 방문 순서대로 나열한 목록")
+            List<UUID> candidateIds
+    ) {}
 
     void resolveTies(UUID roomId, UUID userId, ResolveTies request) {
         var access = registration.access();
@@ -413,9 +433,38 @@ class PlaceVoting {
 
     enum DecisionAction { EXTEND, PROCEED }
 
-    record Decision(int round, DecisionAction action, Instant closesAt) {}
-    record Recollect(int round, Instant closesAt) {}
-    record Start(int round, Instant closesAt) {}
-    record Edit(int round, Long draftRevision, List<Selection> selections) {}
-    record Submit(int round, Long draftRevision) {}
+    record Decision(
+            @Schema(description = "방 상태의 voteReview.round", example = "1")
+            int round,
+            @Schema(description = "EXTEND는 투표 마감 연장, PROCEED는 현재 제출표 집계")
+            DecisionAction action,
+            @Schema(description = "EXTEND의 새 투표 마감 시각. ISO 8601 형식. PROCEED에서는 생략")
+            Instant closesAt
+    ) {}
+    record Recollect(
+            @Schema(description = "방 상태의 recovery.round", example = "1")
+            int round,
+            @Schema(description = "새 등록 라운드의 마감 시각. ISO 8601 형식의 필수 값")
+            Instant closesAt
+    ) {}
+    record Start(
+            @Schema(description = "종료된 장소 등록 라운드. 방 상태의 registration.round 사용", example = "1")
+            int round,
+            @Schema(description = "투표 마감 시각. ISO 8601 형식의 필수 값")
+            Instant closesAt
+    ) {}
+    record Edit(
+            @Schema(description = "방 상태의 voting.round", example = "1")
+            int round,
+            @Schema(description = "방 상태의 voting.myDraft.draftRevision 또는 직전 임시 저장 응답의 버전. 최초 초안은 0", example = "0")
+            Long draftRevision,
+            @Schema(description = "이번에 저장할 전체 선호도 목록. mode가 VOTE인 후보만 후보당 한 번 지정")
+            List<Selection> selections
+    ) {}
+    record Submit(
+            @Schema(description = "방 상태의 voting.round", example = "1")
+            int round,
+            @Schema(description = "직전 선호도 임시 저장 응답의 draftRevision. 현재 초안과 같은 값 사용", example = "1")
+            Long draftRevision
+    ) {}
 }
