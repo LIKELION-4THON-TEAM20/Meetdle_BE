@@ -17,6 +17,7 @@ import com.likelion4thon.Meetdle.room.invite.InviteCrypto;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -210,8 +211,72 @@ class CreateRoomApiTests {
     }
 
     @Test
+    void sameKeyAndBodyCreatesOnlyOneRoom() throws Exception {
+        String key = UUID.randomUUID().toString();
+        String json = """
+                {"title":"금요 저녁","dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":4}
+                """;
+
+        var first = mockMvc.perform(createRoom(json, key)).andExpect(status().isCreated()).andReturn().getResponse();
+        // 응답이 사라져서 앱이 같은 번호표로 다시 보냄 → 방을 또 만들지 않고 처음 응답 그대로
+        var again = mockMvc.perform(createRoom(json, key)).andExpect(status().isCreated()).andReturn().getResponse();
+
+        assertThat(again.getContentAsString()).isEqualTo(first.getContentAsString());
+        assertThat(again.getHeader("Location")).isEqualTo(first.getHeader("Location"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM room", Integer.class))
+                .isEqualTo(FIXTURE_ROOM_COUNT + 1);
+    }
+
+    @Test
+    void sameKeyWithDifferentBodyIsKeyReused() throws Exception {
+        String key = UUID.randomUUID().toString();
+        mockMvc.perform(createRoom("""
+                        {"dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":4}
+                        """, key))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(createRoom("""
+                        {"dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":5}
+                        """, key))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("KEY_REUSED"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM room", Integer.class))
+                .isEqualTo(FIXTURE_ROOM_COUNT + 1);
+    }
+
+    @Test
+    void differentKeysCreateDifferentRooms() throws Exception {
+        String json = """
+                {"dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":4}
+                """;
+        mockMvc.perform(createRoom(json)).andExpect(status().isCreated());
+        mockMvc.perform(createRoom(json)).andExpect(status().isCreated());
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM room", Integer.class))
+                .isEqualTo(FIXTURE_ROOM_COUNT + 2);
+    }
+
+    @Test
+    void missingOrBrokenIdempotencyKeyIs400() throws Exception {
+        mockMvc.perform(post("/api/rooms").with(loggedIn(BoundaryFixtures.HOST)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":4}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.details['Idempotency-Key']").exists());
+        mockMvc.perform(createRoom("""
+                        {"dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":4}
+                        """, "not-a-uuid"))
+                .andExpect(status().isBadRequest());
+        assertRoomCountUnchanged();
+    }
+
+    @Test
     void rejectsAnonymousCaller() throws Exception {
         mockMvc.perform(post("/api/rooms").with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"dates":{"from":"2030-01-10","through":"2030-01-12"},"capacity":4}
@@ -221,9 +286,14 @@ class CreateRoomApiTests {
     }
 
     private org.springframework.test.web.servlet.RequestBuilder createRoom(String json) {
+        return createRoom(json, UUID.randomUUID().toString());
+    }
+
+    private org.springframework.test.web.servlet.RequestBuilder createRoom(String json, String idempotencyKey) {
         return post("/api/rooms")
                 .with(loggedIn(BoundaryFixtures.HOST))
                 .with(csrf())
+                .header("Idempotency-Key", idempotencyKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(json);
     }

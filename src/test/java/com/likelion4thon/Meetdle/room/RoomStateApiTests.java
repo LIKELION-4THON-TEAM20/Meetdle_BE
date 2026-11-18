@@ -77,6 +77,7 @@ class RoomStateApiTests {
         String created = mockMvc.perform(post("/api/rooms")
                         .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))
                         .with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"금요 저녁\",\"dates\":{\"from\":\"2030-01-10\",\"through\":\"2030-01-12\"},"
                                 + "\"capacity\":4}"))
@@ -214,6 +215,7 @@ class RoomStateApiTests {
         return mockMvc.perform(post("/api/rooms/" + ROOM + "/planning-options")
                         .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))
                         .with(csrf())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"inputVersion\":0}"))
                 .andExpect(status().isCreated())
