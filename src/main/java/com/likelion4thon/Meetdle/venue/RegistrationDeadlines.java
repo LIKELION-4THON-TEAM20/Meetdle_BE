@@ -2,7 +2,10 @@ package com.likelion4thon.Meetdle.venue;
 
 import com.likelion4thon.Meetdle.contract.RoomVenueAccess;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -12,6 +15,8 @@ import org.springframework.stereotype.Component;
 @Component
 @EnableScheduling
 class RegistrationDeadlines {
+    private static final Logger log = LoggerFactory.getLogger(RegistrationDeadlines.class);
+
     private final ObjectProvider<RoomVenueAccess> rooms;
     private final RegistrationStore store;
     private final PlaceRegistration registration;
@@ -37,7 +42,7 @@ class RegistrationDeadlines {
                 WHERE r.phase IN ('PLACE_SUBMISSION_OPEN', 'PLACE_SUBMISSION_CLOSED')
                   AND v.collection_closes_at <= ?
                 """, (rs, row) -> UUID.fromString(rs.getString(1)), RegistrationStore.utc(Instant.now()));
-        advanceRooms(due, registration::advanceDeadline);
+        advanceRooms(due, "registration", registration::advanceDeadline);
         var votingDue = store.jdbc().query("""
                 SELECT v.room_id FROM venue_round v
                 JOIN room r ON r.room_id = v.room_id
@@ -46,16 +51,16 @@ class RegistrationDeadlines {
                     OR v.recovery_reason = 'NO_ELIGIBLE_RESULT'
                     OR r.phase = 'WAITING_FOR_HOST_DECISION')
                 """, (rs, row) -> UUID.fromString(rs.getString(1)), RegistrationStore.utc(Instant.now()));
-        advanceRooms(votingDue, voting::advanceDeadline);
+        advanceRooms(votingDue, "voting", voting::advanceDeadline);
     }
 
-    private void advanceRooms(java.util.List<UUID> due, java.util.function.Consumer<UUID> advance) {
+    private void advanceRooms(List<UUID> due, String deadline, Consumer<UUID> advance) {
         for (UUID room : due) {
             try {
                 advance.accept(room);
             } catch (RuntimeException failure) {
-                LoggerFactory.getLogger(RegistrationDeadlines.class)
-                        .warn("Unable to advance venue deadline for room {}", room, failure);
+                log.warn("venue_deadline_failed deadline={} roomId={} failureType={}",
+                        deadline, room, failure.getClass().getSimpleName());
             }
         }
     }

@@ -10,6 +10,7 @@ import com.likelion4thon.Meetdle.planning.PlanningStateReader.SlotOption;
 import com.likelion4thon.Meetdle.planning.options.PlanningOptionsRepository;
 import com.likelion4thon.Meetdle.planning.selection.MeetingSelectionRepository.StoredSelection;
 import com.likelion4thon.Meetdle.planning.selection.dto.SelectMeetingRequest;
+import com.likelion4thon.Meetdle.room.RoomOperationLog;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository;
 import org.springframework.http.HttpStatus;
@@ -113,6 +114,7 @@ public class MeetingSelectionService {
         selectionRepository.insert(selectionId, roomId, options.optionsId(), request.slotId(),
                 request.candidateId(), now);
         roomRepository.confirmSelection(roomId, selectionId, now);
+        RoomOperationLog.phaseChanged(roomId, room.phase(), RoomPhase.REGION_CONFIRMED);
         return selectionRepository.find(selectionId).orElseThrow().meeting();
     }
 

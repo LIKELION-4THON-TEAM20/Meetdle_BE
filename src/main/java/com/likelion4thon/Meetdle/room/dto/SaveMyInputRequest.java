@@ -1,5 +1,6 @@
 package com.likelion4thon.Meetdle.room.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
@@ -17,9 +18,14 @@ import java.util.UUID;
  * @param complete      true면 "입력 완료". 완료 뒤에는 더 못 바꾼다
  */
 public record SaveMyInputRequest(
+        @Schema(description = "출발역 검색 응답의 stationId")
         UUID originStationId,
+        @Schema(description = "약속 후 이동할 목적지역 검색 응답의 stationId")
         UUID destinationStationId,
+        @Schema(description = "참가 가능한 모든 1시간 구간. 기존 가능 시간 목록을 전체 교체")
         @NotNull(message = "필수 값이에요") List<@Valid @NotNull HourSlot> slots,
+        @Schema(description = "방 상태의 myInput.inputRevision 또는 직전 저장 응답의 입력 버전. 최초 저장은 0", example = "0")
         @NotNull(message = "필수 값이에요") @Min(value = 0, message = "0 이상이어야 해요") Long inputRevision,
+        @Schema(description = "true는 입력 완료, false는 임시 저장. 완료 후 수정 불가", example = "false")
         @NotNull(message = "필수 값이에요") Boolean complete
 ) {}

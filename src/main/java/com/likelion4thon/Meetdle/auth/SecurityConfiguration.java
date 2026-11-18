@@ -1,5 +1,7 @@
 package com.likelion4thon.Meetdle.auth;
 
+import com.likelion4thon.Meetdle.common.logging.RequestOperationLog;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URI;
@@ -51,7 +53,7 @@ class SecurityConfiguration {
         cors.setAllowedOrigins(List.of(origin));
         cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Content-Type", "X-CSRF-TOKEN", "Idempotency-Key"));
-        cors.setExposedHeaders(List.of("Location"));
+        cors.setExposedHeaders(List.of("Location", RequestOperationLog.REQUEST_ID_HEADER));
         cors.setAllowCredentials(true);
         var source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", cors);
@@ -90,12 +92,12 @@ class SecurityConfiguration {
                                 "/api/rooms/*/result/visit-order").authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(errors -> errors
-                        .authenticationEntryPoint((request, response, failure) -> unauthenticated(response))
+                        .authenticationEntryPoint((request, response, failure) -> unauthenticated(request, response))
                         .accessDeniedHandler((request, response, failure) -> {
                             if (isAuthenticated()) {
-                                writeError(response, 403, "FORBIDDEN", "Access denied");
+                                writeError(request, response, 403, "FORBIDDEN", "Access denied");
                             } else {
-                                unauthenticated(response);
+                                unauthenticated(request, response);
                             }
                         }))
                 .formLogin(AbstractHttpConfigurer::disable)
@@ -115,12 +117,13 @@ class SecurityConfiguration {
                 && !(authentication instanceof AnonymousAuthenticationToken);
     }
 
-    private static void unauthenticated(HttpServletResponse response) throws IOException {
-        writeError(response, 401, "UNAUTHENTICATED", "Authentication required");
+    private static void unauthenticated(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        writeError(request, response, 401, "UNAUTHENTICATED", "Authentication required");
     }
 
-    private static void writeError(HttpServletResponse response, int status, String code, String message)
-            throws IOException {
+    private static void writeError(HttpServletRequest request, HttpServletResponse response, int status,
+                                   String code, String message) throws IOException {
+        RequestOperationLog.setResultCode(request, code);
         response.setStatus(status);
         response.setContentType("application/json");
         response.getWriter().write("{\"code\":\"" + code + "\",\"message\":\"" + message + "\"}");

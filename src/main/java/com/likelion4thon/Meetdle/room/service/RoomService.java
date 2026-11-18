@@ -4,6 +4,7 @@ import com.likelion4thon.Meetdle.common.error.ApiException;
 import com.likelion4thon.Meetdle.common.time.ServiceZone;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.RoomMember.Role;
+import com.likelion4thon.Meetdle.room.RoomOperationLog;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.domain.NewRoom;
 import com.likelion4thon.Meetdle.room.domain.NewRoomMember;
@@ -102,6 +103,7 @@ public class RoomService {
         // DB의 DATETIME(6)은 마이크로초까지만 저장하므로, 응답과 DB 값이 같도록 미리 잘라둔다.
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         IssuedInvite invite = invitationIssuer.issue(room.roomId(), now);
+        RoomOperationLog.created(room.roomId(), room.capacity());
 
         return new CreateRoomResponse(room.roomId(),
                 new CreateRoomResponse.Invite(invite.code(), invite.inviteUrl(), invite.expiresAt()));
