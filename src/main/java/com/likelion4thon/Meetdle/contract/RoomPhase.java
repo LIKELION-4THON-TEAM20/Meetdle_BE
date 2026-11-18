@@ -26,7 +26,7 @@ public enum RoomPhase {
             case PLACE_SUBMISSION_CLOSED -> next == PLACE_SUBMISSION_OPEN
                     || next == VOTING_OPEN || next == ENDED;
             case VOTING_OPEN -> next == VOTE_REVIEW_REQUIRED || next == WAITING_FOR_HOST_DECISION
-                    || next == FINAL_PLACE_CONFIRMED || next == RECOVERY_REQUIRED;
+                    || next == FINAL_PLACE_CONFIRMED || next == RECOVERY_REQUIRED || next == ENDED;
             case VOTE_REVIEW_REQUIRED -> next == VOTING_OPEN || next == WAITING_FOR_HOST_DECISION
                     || next == FINAL_PLACE_CONFIRMED || next == RECOVERY_REQUIRED || next == ENDED;
             case WAITING_FOR_HOST_DECISION -> next == FINAL_PLACE_CONFIRMED || next == ENDED;
