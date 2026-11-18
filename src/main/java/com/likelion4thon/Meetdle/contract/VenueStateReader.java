@@ -1,5 +1,6 @@
 package com.likelion4thon.Meetdle.contract;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
@@ -80,7 +81,12 @@ public interface VenueStateReader {
 
     record BallotCandidate(UUID candidateId, Place place, BallotMode mode) {}
 
-    record Selection(UUID candidateId, Choice choice) {}
+    record Selection(
+            @Schema(description = "방 상태의 voting.candidates에서 mode가 VOTE인 후보 UUID")
+            UUID candidateId,
+            @Schema(description = "후보 선호도. LIKE는 선호, NEUTRAL은 보통, DISLIKE는 비선호")
+            Choice choice
+    ) {}
 
     record Aggregate(int like, int neutral, int dislike) {}
 

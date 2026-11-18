@@ -1,5 +1,10 @@
 package com.likelion4thon.Meetdle.room.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import com.likelion4thon.Meetdle.common.error.ApiException;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.room.dto.InvitePreview;
@@ -18,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /** 초대 링크·코드 관련 요청. 실제 가입은 RoomController의 A07. */
+@Tag(name = "초대")
 @RestController
 @RequestMapping("/api/invitations")
 public class InvitationController {
@@ -33,12 +39,26 @@ public class InvitationController {
      * 로그인한 사람이 부르면 entryStatus가 MEMBER일 수 있다.
      * ⚠️ 운영에서는 창환님 SecurityConfiguration에서 이 경로를 permitAll로 열어줘야 한다.
      */
+    @Operation(summary = "초대 링크 미리보기",
+            description = "초대 URL의 토큰으로 방 제목과 초대 상태 조회",
+            responses = {
+                @ApiResponse(responseCode = "200", description = "초대 미리보기 반환", useReturnTypeSchema = true)
+            })
     @GetMapping("/{token}")
-    public InvitePreview preview(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable String token) {
+    public InvitePreview preview(@AuthenticationPrincipal AuthenticatedUser user,
+            @Parameter(description = "초대 URL의 경로 끝에 있는 초대 토큰")
+            @PathVariable String token) {
         return invitationService.preview(token, user == null ? null : user.userId());
     }
 
     /** A25 POST /api/invitations/resolve — 로그인 필요. 본문: {"code":"K7P2QX","inviteToken":"(선택)"} */
+    @Operation(summary = "초대 코드 확인",
+            description = "로그인 후 초대 코드를 확인하고 방 참여에 사용할 joinProof 발급",
+            parameters = @Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true,
+                    description = "같은 로그인 세션에서 GET /api/me로 받은 csrfToken 사용"),
+            responses = {
+                @ApiResponse(responseCode = "200", description = "초대 미리보기와 참여 증표 반환", useReturnTypeSchema = true)
+            })
     @PostMapping("/resolve")
     public ResolvedInvite resolve(
             @AuthenticationPrincipal AuthenticatedUser user,

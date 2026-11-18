@@ -1,5 +1,6 @@
 package com.likelion4thon.Meetdle.auth;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -13,8 +14,11 @@ import com.likelion4thon.Meetdle.auth.kakao.KakaoClient;
 import java.net.URI;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -38,6 +42,24 @@ class AuthFlowTests {
         mvc.perform(get("/api/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void correlatesRejectedRequestsWithoutLoggingInvitationTokens(CapturedOutput output) throws Exception {
+        String token = "z".repeat(43);
+        String suppliedRequestId = "untrusted-request-id";
+        String requestId = mvc.perform(get("/api/invitations/{token}", token)
+                        .header("X-Request-Id", suppliedRequestId).param("q", "sensitive-query"))
+                .andExpect(status().isNotFound())
+                .andExpect(header().exists("X-Request-Id"))
+                .andReturn().getResponse().getHeader("X-Request-Id");
+
+        assertThat(UUID.fromString(requestId).toString()).isEqualTo(requestId);
+        assertThat(output.getOut())
+                .contains("api_request requestId=" + requestId + " method=GET route=/api/invitations/{token}"
+                        + " roomId=- status=404 code=INVITATION_NOT_FOUND")
+                .doesNotContain(token, suppliedRequestId, "sensitive-query");
     }
 
     @Test
