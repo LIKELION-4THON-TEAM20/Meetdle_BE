@@ -4,7 +4,8 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
-
+/application-local.properties
+/.env
 ### STS ###
 .apt_generated
 .classpath
@@ -163,3 +164,5 @@ gradle-app.setting
 *.hprof
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,java,gradle,groovy
+### Meetdle 로컬 비밀 설정 (각자 컴퓨터에만 둔다. 깃허브에 올리지 않음) ###
+application-local.properties
