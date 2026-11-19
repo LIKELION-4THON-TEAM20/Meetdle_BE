@@ -18,7 +18,6 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -44,16 +43,15 @@ class AuthController {
     private final JdbcTemplate jdbc;
     private final SecurityContextRepository contexts;
     private final HttpSessionCsrfTokenRepository csrfTokens;
-    private final String frontendOrigin;
+    private final FrontendOrigins frontendOrigins;
 
     AuthController(KakaoClient kakao, JdbcTemplate jdbc, SecurityContextRepository contexts,
-                   HttpSessionCsrfTokenRepository csrfTokens,
-                   @Value("${meetdle.frontend.origin:http://localhost:5173}") String frontendOrigin) {
+                   HttpSessionCsrfTokenRepository csrfTokens, FrontendOrigins frontendOrigins) {
         this.kakao = kakao;
         this.jdbc = jdbc;
         this.contexts = contexts;
         this.csrfTokens = csrfTokens;
-        this.frontendOrigin = frontendOrigin;
+        this.frontendOrigins = frontendOrigins;
     }
 
     @Operation(summary = "카카오 로그인 시작",
@@ -64,9 +62,20 @@ class AuthController {
     @GetMapping("/api/auth/kakao/start")
     ResponseEntity<?> start(
             @Parameter(description = "로그인 후 초대 화면으로 돌아갈 때 사용할 URL 경로의 초대 토큰")
-            @RequestParam(required = false) String inviteToken, HttpServletRequest request) {
+            @RequestParam(required = false) String inviteToken,
+            @Parameter(description = "기존 회원의 로그인 후 복귀 경로. /rooms/{UUID}만 허용, inviteToken과 동시 전달 불가")
+            @RequestParam(required = false) String returnTo,
+            @Parameter(description = "로그인 후 복귀할 프런트 Origin. 설정된 기본 또는 추가 허용 주소만 가능하며 생략하면 기본 주소 사용")
+            @RequestParam(required = false) String returnOrigin, HttpServletRequest request) {
+        if (returnOrigin != null && !frontendOrigins.allowedOrigins().contains(returnOrigin)) {
+            return error(request, 400, "INVALID_REQUEST", "Invalid return origin");
+        }
         if (inviteToken != null && !inviteToken.matches("[A-Za-z0-9_-]{43}")) {
             return error(request, 400, "INVALID_REQUEST", "Invalid invite token");
+        }
+        if (returnTo != null && (inviteToken != null
+                || !returnTo.matches("/rooms/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))) {
+            return error(request, 400, "INVALID_REQUEST", "Invalid return path");
         }
         if (!kakao.configured()) {
             return error(request, 503, "PROVIDER_UNAVAILABLE", "Kakao login is unavailable");
@@ -75,9 +84,13 @@ class AuthController {
         random.nextBytes(bytes);
         String state = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         String path = inviteToken == null ? "/rooms" : "/invite/" + inviteToken;
+        if (returnTo != null) {
+            path = returnTo;
+        }
+        String origin = returnOrigin == null ? frontendOrigins.defaultOrigin() : returnOrigin;
         var session = request.getSession();
         synchronized (WebUtils.getSessionMutex(session)) {
-            session.setAttribute(ATTEMPT, new Attempt(state, path, Instant.now().plusSeconds(300)));
+            session.setAttribute(ATTEMPT, new Attempt(state, origin, path, Instant.now().plusSeconds(300)));
         }
         return redirect(kakao.authorize(state));
     }
@@ -109,7 +122,7 @@ class AuthController {
             attempt = pending;
             session.removeAttribute(ATTEMPT);
         }
-        String destination = frontendOrigin + attempt.path();
+        String destination = attempt.origin() + attempt.path();
         if ((code == null) == (error == null) || (code != null && code.isBlank())
                 || (error != null && error.isBlank())) {
             return error(request, 400, "INVALID_REQUEST", "Expected a code or a provider error");
@@ -143,17 +156,20 @@ class AuthController {
         var users = jdbc.query(select, (rs, row) -> new AuthenticatedUser(
                 UUID.fromString(rs.getString("user_id")), rs.getString("nickname")), profile.id());
         if (!users.isEmpty()) {
-            return users.get(0);
+            var user = users.get(0);
+            jdbc.update("UPDATE app_user SET nickname = ?, profile_image_url = ? WHERE user_id = ?",
+                    profile.nickname(), profile.profileImageUrl(), user.userId().toString());
+            return new AuthenticatedUser(user.userId(), profile.nickname(), profile.profileImageUrl());
         }
         UUID userId = UUID.randomUUID();
         try {
-            jdbc.update("INSERT INTO app_user (user_id, provider, provider_user_id, nickname) VALUES (?, 'KAKAO', ?, ?)",
-                    userId.toString(), profile.id(), profile.nickname());
+            jdbc.update("INSERT INTO app_user (user_id, provider, provider_user_id, nickname, profile_image_url) VALUES (?, 'KAKAO', ?, ?, ?)",
+                    userId.toString(), profile.id(), profile.nickname(), profile.profileImageUrl());
         } catch (DuplicateKeyException conflict) {
             return jdbc.queryForObject(select, (rs, row) -> new AuthenticatedUser(
-                    UUID.fromString(rs.getString("user_id")), rs.getString("nickname")), profile.id());
+                    UUID.fromString(rs.getString("user_id")), rs.getString("nickname"), profile.profileImageUrl()), profile.id());
         }
-        return new AuthenticatedUser(userId, profile.nickname());
+        return new AuthenticatedUser(userId, profile.nickname(), profile.profileImageUrl());
     }
 
     @Operation(summary = "내 로그인 세션 조회",
@@ -181,7 +197,7 @@ class AuthController {
         return ResponseEntity.status(302).location(location).cacheControl(CacheControl.noStore()).build();
     }
 
-    private record Attempt(String state, String path, Instant expiresAt) {}
+    private record Attempt(String state, String origin, String path, Instant expiresAt) {}
     private record Session(
             @Schema(description = "현재 세션으로 로그인한 사용자 정보") AuthenticatedUser user,
             @Schema(description = "같은 세션의 쓰기 요청에서 X-CSRF-TOKEN 헤더로 보낼 값") String csrfToken

@@ -110,7 +110,7 @@ public class RoomService {
     }
 
     /** 제목은 선택값. 앞뒤 공백을 지운 뒤 1~50자여야 한다. 예: "  금요 저녁 " → "금요 저녁" */
-    private String normalizeTitle(String rawTitle) {
+    String normalizeTitle(String rawTitle) {
         if (rawTitle == null) {
             return null;
         }
@@ -123,7 +123,7 @@ public class RoomService {
     }
 
     /** 예: 11/20~11/22 → 3일(통과), 11/20~11/27 → 8일(거절), 11/22~11/20 → 거꾸로(거절) */
-    private void validateDates(LocalDate from, LocalDate through) {
+    void validateDates(LocalDate from, LocalDate through) {
         if (through.isBefore(from)) {
             throw ApiException.invalidRequest("dates", "끝 날짜가 시작 날짜보다 빠를 수 없어요");
         }

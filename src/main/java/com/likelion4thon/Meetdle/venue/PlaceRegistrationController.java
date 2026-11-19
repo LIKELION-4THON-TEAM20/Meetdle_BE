@@ -35,6 +35,36 @@ class PlaceRegistrationController {
         this.voting = voting;
     }
 
+    record AddCandidate(int round, Category category, String pickToken) {}
+    record AddedCandidate(UUID candidateId) {}
+
+    @Operation(summary = "내 장소 후보 추가", description = "동일 카테고리 여러 장소 허용. 같은 장소를 다시 보내면 기존 후보 ID 반환")
+    @PostMapping("/place-submission/me/candidates")
+    AddedCandidate addCandidate(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+                                 @RequestBody AddCandidate request) {
+        if (request.category() == null) {
+            throw new VenueException(400, "INVALID_REQUEST");
+        }
+        return new AddedCandidate(registration.addNomination(roomId, user.userId(), request.category(),
+                new PlaceRegistration.Nomination(request.round(), request.pickToken())));
+    }
+
+    @Operation(summary = "내 장소 후보 한 곳 삭제")
+    @DeleteMapping("/place-submission/me/candidates/{candidateId}")
+    ResponseEntity<Void> removeCandidate(@PathVariable UUID roomId, @PathVariable UUID candidateId,
+            @RequestParam int round, @AuthenticationPrincipal AuthenticatedUser user) {
+        registration.removeNomination(roomId, user.userId(), round, candidateId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "일반 결과 최종 확정", description = "방장이 RESULT_READY에서 최신 결과 버전을 확인하고 확정")
+    @PutMapping("/result/confirmation")
+    ResponseEntity<Void> confirmResult(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+                                        @RequestBody PlaceVoting.ConfirmResult request) {
+        voting.confirmResult(roomId, user.userId(), request);
+        return ResponseEntity.noContent().build();
+    }
+
     @Operation(summary = "동점 장소 확정",
             description = "방장이 최신 tieDecision을 조회한 뒤 동점 카테고리마다 최종 방문 장소 한 곳 선택",
             parameters = @Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true,

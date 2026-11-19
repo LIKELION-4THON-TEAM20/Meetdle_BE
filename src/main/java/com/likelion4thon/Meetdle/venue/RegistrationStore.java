@@ -28,13 +28,16 @@ class RegistrationStore {
     Optional<Round> latest(UUID room) {
         return jdbc.query("""
                 SELECT round_no, collection_closes_at, collection_closed_at, collection_extended_at,
-                    mini_timer_used_at, vote_closes_at, vote_extension_count, recovery_reason FROM venue_round
+                    mini_timer_used_at, vote_closes_at, vote_extension_count, recovery_reason,
+                    (SELECT COUNT(*) FROM venue_round previous WHERE previous.room_id = venue_round.room_id
+                        AND previous.selection_id = venue_round.selection_id AND previous.round_no <= venue_round.round_no) AS attempt
+                FROM venue_round
                 WHERE room_id = ? ORDER BY round_no DESC LIMIT 1
                 """, (rs, row) -> new Round(room.toString(), rs.getInt("round_no"),
                 instant(rs, "collection_closes_at"), instant(rs, "collection_closed_at"),
                 instant(rs, "collection_extended_at") != null, instant(rs, "mini_timer_used_at") != null,
                 instant(rs, "vote_closes_at"), rs.getInt("vote_extension_count"),
-                rs.getString("recovery_reason")), room.toString()).stream().findFirst();
+                rs.getString("recovery_reason"), rs.getInt("attempt")), room.toString()).stream().findFirst();
     }
 
     List<CategorySetting> categories(Round round) {
@@ -84,10 +87,9 @@ class RegistrationStore {
                 .allMatch(setting -> count(counts, setting.category()) > 0);
     }
 
-    boolean finalizeIfAutomatic(Round round, Instant now) {
+    boolean prepareIfAutomatic(Round round, Instant now) {
         var counts = counts(round);
-        if (categories(round).stream().anyMatch(setting ->
-                count(counts, setting.category()) != (setting.required() ? 1 : 0))) {
+        if (!hasRequiredCandidates(round, counts) || counts.stream().anyMatch(value -> value.count() > 1)) {
             return false;
         }
         var candidates = jdbc.query("""
@@ -100,7 +102,7 @@ class RegistrationStore {
         jdbc.update("""
                 INSERT INTO venue_result (room_id, round_no, result_revision, submitted_count, computed_at, finalized_at)
                 VALUES (?, ?, 1, 0, ?, ?)
-                """, round.room(), round.number(), utc(now), utc(now));
+                """, round.room(), round.number(), utc(now), null);
         int position = 1;
         for (String candidate : candidates) {
             jdbc.update("""
@@ -120,24 +122,18 @@ class RegistrationStore {
                 .mapToInt(CategoryCount::count).findFirst().orElse(0);
     }
 
-    boolean hasRequiredNominations(Round round, List<Place> nominations) {
-        return categories(round).stream().filter(CategorySetting::required)
-                .allMatch(setting -> nominations.stream().anyMatch(place -> place.category() == setting.category()));
-    }
-
     boolean nominate(Round round, UUID participant, Category category, PickTokens.Pick pick, Instant now) {
         String participantId = participant.toString();
         String categoryName = category.name();
-        String previous = jdbc.query("""
+        var previous = jdbc.query("""
                 SELECT candidate_id FROM place_nomination WHERE room_id = ? AND round_no = ?
                 AND participant_id = ? AND category = ?
-                """, (rs, row) -> rs.getString(1), round.room(), round.number(), participantId, categoryName)
-                .stream().findFirst().orElse(null);
+                """, (rs, row) -> rs.getString(1), round.room(), round.number(), participantId, categoryName);
         String candidate = pick == null ? null : candidate(round, pick);
-        if (java.util.Objects.equals(previous, candidate)) {
+        if (previous.equals(candidate == null ? List.of() : List.of(candidate))) {
             return false;
         }
-        if (previous != null) {
+        if (!previous.isEmpty()) {
             jdbc.update("""
                     DELETE FROM place_nomination WHERE room_id = ? AND round_no = ?
                     AND participant_id = ? AND category = ?
@@ -149,13 +145,58 @@ class RegistrationStore {
                     VALUES (?, ?, ?, ?, ?, ?)
                     """, round.room(), round.number(), participantId, categoryName, candidate, utc(now));
         }
-        if (previous != null) {
+        for (String previousId : previous) {
             jdbc.update("""
                     DELETE FROM place_candidate WHERE room_id = ? AND round_no = ? AND candidate_id = ?
                     AND NOT EXISTS (SELECT 1 FROM place_nomination WHERE room_id = ? AND round_no = ? AND candidate_id = ?)
-                    """, round.room(), round.number(), previous, round.room(), round.number(), previous);
+                    """, round.room(), round.number(), previousId, round.room(), round.number(), previousId);
         }
         return true;
+    }
+
+    UUID add(Round round, UUID participant, PickTokens.Pick pick, Instant now) {
+        String candidate = candidate(round, pick);
+        if (jdbc.queryForObject("""
+                SELECT COUNT(*) FROM place_nomination WHERE room_id = ? AND round_no = ?
+                    AND participant_id = ? AND candidate_id = ?
+                """, Integer.class, round.room(), round.number(), participant.toString(), candidate) == 0) {
+            jdbc.update("""
+                    INSERT INTO place_nomination (room_id, round_no, participant_id, category, candidate_id, nominated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, round.room(), round.number(), participant.toString(), pick.place().category().name(),
+                    candidate, utc(now));
+        }
+        return UUID.fromString(candidate);
+    }
+
+    boolean remove(Round round, UUID participant, UUID candidate) {
+        int changed = jdbc.update("""
+                DELETE FROM place_nomination WHERE room_id = ? AND round_no = ? AND participant_id = ? AND candidate_id = ?
+                """, round.room(), round.number(), participant.toString(), candidate.toString());
+        jdbc.update("""
+                DELETE FROM place_candidate WHERE room_id = ? AND round_no = ? AND candidate_id = ?
+                    AND NOT EXISTS (SELECT 1 FROM place_nomination WHERE room_id = ? AND round_no = ? AND candidate_id = ?)
+                """, round.room(), round.number(), candidate.toString(), round.room(), round.number(), candidate.toString());
+        return changed > 0;
+    }
+
+    List<Nomination> myCandidates(Round round, UUID participant) {
+        return jdbc.query("""
+                SELECT c.* FROM place_nomination n JOIN place_candidate c
+                    ON c.room_id = n.room_id AND c.round_no = n.round_no AND c.candidate_id = n.candidate_id
+                WHERE n.room_id = ? AND n.round_no = ? AND n.participant_id = ?
+                ORDER BY n.nominated_at, n.candidate_id
+                """, (rs, row) -> new Nomination(UUID.fromString(rs.getString("candidate_id")), place(rs)),
+                round.room(), round.number(), participant.toString());
+    }
+
+    List<UUID> started(Round round, boolean voting) {
+        String query = voting ? """
+                SELECT participant_id FROM round_member WHERE room_id = ? AND round_no = ? AND draft_revision > 0
+                """ : """
+                SELECT DISTINCT participant_id FROM place_nomination WHERE room_id = ? AND round_no = ?
+                """;
+        return jdbc.query(query, (rs, row) -> UUID.fromString(rs.getString(1)), round.room(), round.number());
     }
 
     int eligibleCount(Round round) {
@@ -203,5 +244,5 @@ class RegistrationStore {
     }
 
     record Round(String room, int number, Instant closesAt, Instant closedAt, boolean extended,
-                 boolean miniTimerUsed, Instant voteClosesAt, int voteExtensionCount, String recoveryReason) {}
+                 boolean miniTimerUsed, Instant voteClosesAt, int voteExtensionCount, String recoveryReason, int attempt) {}
 }

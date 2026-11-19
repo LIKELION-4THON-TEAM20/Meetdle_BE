@@ -2,6 +2,7 @@ package com.likelion4thon.Meetdle.room.service;
 
 import com.likelion4thon.Meetdle.common.error.ApiException;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
+import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomMember;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.contract.SelectedMeeting;
@@ -21,6 +22,7 @@ import com.likelion4thon.Meetdle.room.repository.RoomRepository;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository.MemberStatusRow;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository.RoomStateRow;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,6 +62,8 @@ public class RoomStateService {
     private final InviteCrypto inviteCrypto;
     private final InvitationIssuer invitationIssuer;
     private final Clock clock;
+    @Value("${meetdle.frontend.origin:http://localhost:5173}")
+    private String frontendOrigin;
 
     public RoomStateService(RoomRepository roomRepository, RoomInvitationRepository invitationRepository,
                             MemberInputService memberInputService, PlanningStateReader planningStateReader,
@@ -105,6 +109,18 @@ public class RoomStateService {
 
         // 4) 버튼
         List<String> actions = new ArrayList<>(roomActions(room, host, myInput, options.isPresent(), inputCompleted));
+        if (host) {
+            actions.add("EDIT_ROOM");
+            if (room.phase() == RoomPhase.WAITING_FOR_DEPARTURE && room.startedAt() == null && members.size() >= 2) {
+                actions.add("START_ROOM");
+            }
+        }
+        boolean past = room.phase() == RoomPhase.ENDED
+                || meeting.map(value -> !value.endsAt().isAfter(now)).orElseGet(() ->
+                    room.endsOn().isBefore(java.time.LocalDate.ofInstant(now, com.likelion4thon.Meetdle.common.time.ServiceZone.SEOUL)));
+        if (past) {
+            actions.add("DELETE_ROOM");
+        }
         venueState.allowedActions().forEach(action -> actions.add(action.name()));
         Set<VenueStateReader.Action> venueActions = new HashSet<>(venueState.allowedActions());
 
@@ -125,7 +141,7 @@ public class RoomStateService {
                                 || venueActions.contains(VenueStateReader.Action.SUBMIT_VOTE)),
                 members.stream()
                         .map(m -> new RoomState.MemberStatus(m.participantId(), m.nickname(), m.role(),
-                                m.inputComplete()))
+                                m.inputComplete(), completionStatus(m.inputComplete(), m.inputStarted()), m.profileImageUrl()))
                         .toList(),
                 myInput,
                 host && room.joinClosedAt() == null ? invite(roomId) : null,
@@ -137,7 +153,12 @@ public class RoomStateService {
                 tieDecision(venueState.tieDecision()),
                 finalResult(venueState.result(), meeting.orElse(null)),
                 venueState.recovery(),
-                actions);
+                actions, room.startedAt(), frontendOrigin + "/rooms/" + roomId,
+                meeting.map(value -> {
+                    var window = MeetingWindow.calculate(value.meetingAt(), now);
+                    return new RoomState.DeadlinePolicy((int) window.registrationMinimum().toMinutes(),
+                            window.registrationCutoff(), (int) window.votingMinimum().toMinutes(), window.votingCutoff());
+                }).orElse(null));
     }
 
     /**
@@ -186,12 +207,21 @@ public class RoomStateService {
                 .orElse(null);
     }
 
-    private static List<RoomState.CompletionEntry> completion(List<MemberStatusRow> members, List<UUID> done) {
+    private static List<RoomState.CompletionEntry> completion(List<MemberStatusRow> members, List<UUID> done,
+                                                            List<UUID> started) {
         Set<UUID> doneSet = Set.copyOf(done);
         return members.stream()
                 .map(m -> new RoomState.CompletionEntry(m.participantId(), m.nickname(),
-                        doneSet.contains(m.participantId())))
+                        doneSet.contains(m.participantId()), completionStatus(doneSet.contains(m.participantId()),
+                            started.contains(m.participantId())), m.profileImageUrl()))
                 .toList();
+    }
+
+    private static RoomState.CompletionStatus completionStatus(boolean complete, boolean started) {
+        if (complete) {
+            return RoomState.CompletionStatus.COMPLETED;
+        }
+        return started ? RoomState.CompletionStatus.IN_PROGRESS : RoomState.CompletionStatus.NOT_STARTED;
     }
 
     private static RoomState.Registration registration(VenueStateReader.Registration r, List<MemberStatusRow> members,
@@ -201,8 +231,8 @@ public class RoomStateService {
         }
         return new RoomState.Registration(r.round(), r.closesAt(), r.closedAt(),
                 new RoomState.Progress(r.completedParticipantIds().size(), capacity),
-                completion(members, r.completedParticipantIds()), r.categories(), r.uniqueCandidateCount(),
-                r.completedParticipantIds().contains(me.participantId()), r.myNominations(), r.categoryCounts());
+                completion(members, r.completedParticipantIds(), r.startedParticipantIds()), r.categories(), r.uniqueCandidateCount(),
+                r.completedParticipantIds().contains(me.participantId()), r.myNominations(), r.categoryCounts(), r.myCandidates());
     }
 
     private static RoomState.Voting voting(VenueStateReader.Voting v, List<MemberStatusRow> members, int capacity) {
@@ -211,7 +241,7 @@ public class RoomStateService {
         }
         return new RoomState.Voting(v.round(), v.closesAt(),
                 new RoomState.Progress(v.completedParticipantIds().size(), capacity),
-                completion(members, v.completedParticipantIds()), v.candidates(), v.myDraft());
+                completion(members, v.completedParticipantIds(), v.startedParticipantIds()), v.candidates(), v.myDraft());
     }
 
     private static RoomState.VoteReview voteReview(VenueStateReader.VoteReview v, List<MemberStatusRow> members,
@@ -221,7 +251,7 @@ public class RoomStateService {
         }
         return new RoomState.VoteReview(v.round(),
                 new RoomState.Progress(v.completedParticipantIds().size(), capacity),
-                completion(members, v.completedParticipantIds()), v.canExtend(), v.canProceed());
+                completion(members, v.completedParticipantIds(), v.startedParticipantIds()), v.canExtend(), v.canProceed());
     }
 
     private static RoomState.TieDecision tieDecision(VenueStateReader.TieDecision t) {
@@ -237,6 +267,6 @@ public class RoomStateService {
             return null;
         }
         return new RoomState.FinalResult(f.round(), f.resultRevision(), meeting, f.submittedCount(),
-                f.selected(), f.details(), f.visitOrder());
+                f.selected(), f.details(), f.visitOrder(), f.confirmed());
     }
 }

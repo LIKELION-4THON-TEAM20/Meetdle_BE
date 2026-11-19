@@ -73,8 +73,18 @@ public class KakaoClient {
             nickname = name.strip();
         }
         int length = Math.min(100, nickname.codePointCount(0, nickname.length()));
-        return new Profile(id.toString(), nickname.substring(0, nickname.offsetByCodePoints(0, length)));
+        String imageUrl = null;
+        if (user.get("kakao_account") instanceof Map<?, ?> account
+                && account.get("profile") instanceof Map<?, ?> profile
+                && profile.get("profile_image_url") instanceof String image && image.startsWith("https://")) {
+            imageUrl = image;
+        }
+        return new Profile(id.toString(), nickname.substring(0, nickname.offsetByCodePoints(0, length)), imageUrl);
     }
 
-    public record Profile(String id, String nickname) {}
+    public record Profile(String id, String nickname, String profileImageUrl) {
+        public Profile(String id, String nickname) {
+            this(id, nickname, null);
+        }
+    }
 }

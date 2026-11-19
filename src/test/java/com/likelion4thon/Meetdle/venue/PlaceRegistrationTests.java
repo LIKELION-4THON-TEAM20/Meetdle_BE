@@ -98,7 +98,9 @@ class PlaceRegistrationTests {
 
         when(kakao.search(eq(meeting.station()), eq(Category.CAFE), isNull(), any(), eq(2500), eq(1)))
                 .thenReturn(new KakaoLocal.Page(List.of(new KakaoLocal.FoundPlace("125",
-                        new Place("Cafe", "Address", 37.5547, 126.9707, Category.CAFE, null))), true));
+                        new Place("Cafe", "Address", 37.5547, 126.9707, Category.CAFE, null)),
+                        new KakaoLocal.FoundPlace("126", new Place("Another cafe", "Address", 37.5547, 126.9707,
+                                Category.CAFE, null))), true));
 
         mvc.perform(get(SEARCH).param("category", "FOOD")).andExpect(status().isUnauthorized());
         var host = session(HOST.userId());
@@ -151,6 +153,13 @@ class PlaceRegistrationTests {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         String cafePath = OPEN + "/me/CAFE";
         putCommand(cafePath, observer, pick.replace(token, JsonPath.<String>read(cafe, "$.items[0].pickToken")), 204);
+        String addCafe = "{\"round\":1,\"category\":\"CAFE\",\"pickToken\":\"%s\"}"
+                .formatted(JsonPath.<String>read(cafe, "$.items[1].pickToken"));
+        postCommand(OPEN + "/me/candidates", observer, UUID.randomUUID(), addCafe, 200);
+        postCommand(OPEN + "/me/candidates", observer, UUID.randomUUID(), addCafe, 200);
+        assertEquals(2, projection(OBSERVER).myCandidates().size());
+        assertEquals(2, projection(OBSERVER).myNominations().size());
+        assertEquals(1, projection(MEMBER).myNominations().size());
         putCommand(OPEN + "/closure", member, "{\"round\":1}", 403);
 
         String mini = "{\"round\":1,\"mode\":\"MINI_TIMER\"}";
@@ -178,13 +187,18 @@ class PlaceRegistrationTests {
         putCommand(FOOD, observer, pick.replace(token, JsonPath.<String>read(fresh, "$.items[0].pickToken")), 204);
         putCommand(OPEN + "/me/completion", observer, "{\"round\":1}", 204);
         putCommand(OPEN + "/me/completion", observer, "{\"round\":1}", 204);
-        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+        assertEquals(RESULT_READY, phase());
         var result = reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(MEMBER), phase(), fixture.capacity(),
                 fixture.selectedMeeting().map(selected -> selected.meetingAt()), now)).result();
         assertEquals(0, result.submittedCount());
         assertEquals(List.of(Category.FOOD), result.selected().stream().map(place -> place.place().category()).toList());
         assertEquals(List.of(result.selected().get(0).candidateId()), result.visitOrder());
         assertNull(result.selected().get(0).aggregate());
+        putCommand(ROOT + "/result/confirmation", member,
+                "{\"round\":1,\"resultRevision\":1}", 403);
+        putCommand(ROOT + "/result/confirmation", host,
+                "{\"round\":1,\"resultRevision\":1}", 204);
+        assertEquals(FINAL_PLACE_CONFIRMED, phase());
 
         verifyVoting(host, member, meeting.selectionId());
     }
@@ -206,12 +220,14 @@ class PlaceRegistrationTests {
                 """, room, room);
         UUID auto = UUID.randomUUID();
         UUID competitive = UUID.randomUUID();
+        UUID otherCafe = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO place_candidate (room_id, round_no, candidate_id, category, provider_place_id,
                     name, address, lat, lng)
                 VALUES (?, 2, ?, 'FOOD', '1', 'Food', 'Address', 37, 127),
-                       (?, 2, ?, 'CAFE', '2', 'Cafe', 'Address', 37, 127)
-                """, room, auto.toString(), room, competitive.toString());
+                       (?, 2, ?, 'CAFE', '2', 'Cafe', 'Address', 37, 127),
+                       (?, 2, ?, 'CAFE', '3', 'Other cafe', 'Address', 37, 127)
+                """, room, auto.toString(), room, competitive.toString(), room, otherCafe.toString());
         now = Instant.parse("2030-01-01T02:15:00Z");
         Instant deadline = now.plusSeconds(1800);
         String start = """
@@ -222,13 +238,14 @@ class PlaceRegistrationTests {
         postCommand(ROOT + "/voting", host, key, start, 204);
         postCommand(ROOT + "/voting", host, key, start, 204);
         assertEquals(VOTING_OPEN, phase());
-        assertEquals(2, voteState(HOST.userId()).candidates().size());
+        assertEquals(3, voteState(HOST.userId()).candidates().size());
 
         String preferences = ROOT + "/preferences/me";
         String submissions = ROOT + "/vote-submissions/me";
         String edit = """
-                {"round":2,"draftRevision":0,"selections":[{"candidateId":"%s","choice":"LIKE"}]}
-                """;
+                {"round":2,"draftRevision":0,"selections":[{"candidateId":"%%s","choice":"LIKE"},
+                  {"candidateId":"%s","choice":"NEUTRAL"}]}
+                """.formatted(otherCafe);
         putCommand(submissions, host, "{\"round\":2,\"draftRevision\":0}", 409);
         putCommand(preferences, host, edit.formatted(auto), 400);
         putCommand(preferences, host, edit.formatted(competitive), 200);
@@ -268,7 +285,7 @@ class PlaceRegistrationTests {
         postCommand(decision, host, UUID.randomUUID(), "{\"round\":2,\"action\":\"PROCEED\"}", 204);
         voting.advanceDeadline(ROOM_ID);
         putCommand(submissions, host, submit, 204);
-        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+        assertEquals(RESULT_READY, phase());
         var result = venueState(MEMBER).result();
         assertEquals(1, result.submittedCount());
         assertEquals(List.of(auto, competitive), result.visitOrder());

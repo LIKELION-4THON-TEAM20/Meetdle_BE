@@ -9,6 +9,7 @@ public enum RoomPhase {
     VOTING_OPEN,
     VOTE_REVIEW_REQUIRED,
     WAITING_FOR_HOST_DECISION,
+    RESULT_READY,
     FINAL_PLACE_CONFIRMED,
     RECOVERY_REQUIRED,
     ENDED;
@@ -22,14 +23,15 @@ public enum RoomPhase {
             case OPTIONS_READY -> next == REGION_CONFIRMED;
             case REGION_CONFIRMED -> next == PLACE_SUBMISSION_OPEN;
             case PLACE_SUBMISSION_OPEN -> next == PLACE_SUBMISSION_CLOSED
-                    || next == FINAL_PLACE_CONFIRMED;
+                    || next == RESULT_READY;
             case PLACE_SUBMISSION_CLOSED -> next == PLACE_SUBMISSION_OPEN
                     || next == VOTING_OPEN || next == ENDED;
             case VOTING_OPEN -> next == VOTE_REVIEW_REQUIRED || next == WAITING_FOR_HOST_DECISION
-                    || next == FINAL_PLACE_CONFIRMED || next == RECOVERY_REQUIRED || next == ENDED;
+                    || next == RESULT_READY || next == RECOVERY_REQUIRED || next == ENDED;
             case VOTE_REVIEW_REQUIRED -> next == VOTING_OPEN || next == WAITING_FOR_HOST_DECISION
-                    || next == FINAL_PLACE_CONFIRMED || next == RECOVERY_REQUIRED || next == ENDED;
-            case WAITING_FOR_HOST_DECISION -> next == FINAL_PLACE_CONFIRMED || next == ENDED;
+                    || next == RESULT_READY || next == RECOVERY_REQUIRED || next == ENDED;
+            case WAITING_FOR_HOST_DECISION -> next == RESULT_READY || next == ENDED;
+            case RESULT_READY -> next == FINAL_PLACE_CONFIRMED || next == ENDED;
             case RECOVERY_REQUIRED -> next == PLACE_SUBMISSION_OPEN || next == ENDED;
             case FINAL_PLACE_CONFIRMED, ENDED -> false;
         };

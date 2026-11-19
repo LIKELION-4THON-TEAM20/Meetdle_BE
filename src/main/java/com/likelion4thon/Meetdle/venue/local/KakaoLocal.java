@@ -49,8 +49,26 @@ public class KakaoLocal {
     }
 
     public Page search(Station station, Category category, String query, String bounds, int radius, int page) {
+        var pages = new java.util.ArrayList<SearchResponse>();
+        boolean requiresFiltering = category == Category.FOOD || category == Category.BAR;
+        for (int number = requiresFiltering ? 1 : page; number <= 3; number++) {
+            var response = fetch(station, category, query, bounds, radius, number);
+            pages.add(response);
+            if (response.meta().is_end() || !requiresFiltering) {
+                break;
+            }
+        }
+        int matches = (int) pages.stream().flatMap(value -> value.documents().stream())
+                .filter(document -> matches(category, document)).map(Document::id).distinct().count();
+        Integer total = pages.get(pages.size() - 1).meta().is_end() ? matches : null;
+        if (!requiresFiltering) {
+            total = pages.get(0).meta().total_count();
+        }
+        if (requiresFiltering && page > pages.size()) {
+            return new Page(List.of(), true, total);
+        }
         try {
-            var result = fetch(station, category, query, bounds, radius, page);
+            var result = pages.get(requiresFiltering ? page - 1 : 0);
             var places = result.documents().stream()
                     .filter(document -> matches(category, document))
                     .map(document -> {
@@ -63,7 +81,7 @@ public class KakaoLocal {
                         return new FoundPlace(document.id(), new Place(document.place_name(), address,
                                 Double.parseDouble(document.y()), Double.parseDouble(document.x()), category, detail));
                     }).toList();
-            return new Page(places, result.meta().is_end());
+            return new Page(places, result.meta().is_end(), total);
         } catch (IllegalArgumentException failure) {
             throw new VenueException(503, "LOCAL_UNAVAILABLE");
         }
@@ -132,7 +150,11 @@ public class KakaoLocal {
     }
 
     public record FoundPlace(String id, Place place) {}
-    public record Page(List<FoundPlace> items, boolean end) {}
+    public record Page(List<FoundPlace> items, boolean end, Integer totalCount) {
+        public Page(List<FoundPlace> items, boolean end) {
+            this(items, end, end ? items.size() : null);
+        }
+    }
     private record SearchResponse(Meta meta, List<Document> documents) {}
     private record Meta(int total_count, boolean is_end) {}
     private record Document(String id, String place_name, String address_name, String road_address_name,

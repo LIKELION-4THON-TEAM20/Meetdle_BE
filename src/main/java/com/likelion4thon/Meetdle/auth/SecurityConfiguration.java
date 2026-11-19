@@ -4,7 +4,6 @@ import com.likelion4thon.Meetdle.common.logging.RequestOperationLog;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.net.URI;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
@@ -41,16 +40,9 @@ class SecurityConfiguration {
     }
 
     @Bean
-    UrlBasedCorsConfigurationSource corsConfigurationSource(
-            @Value("${meetdle.frontend.origin:http://localhost:5173}") String origin) {
-        URI uri = URI.create(origin);
-        if (!List.of("http", "https").contains(uri.getScheme()) || uri.getHost() == null
-                || uri.getRawUserInfo() != null || !uri.getRawPath().isEmpty()
-                || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-            throw new IllegalArgumentException("meetdle.frontend.origin must be an HTTP(S) origin");
-        }
+    UrlBasedCorsConfigurationSource corsConfigurationSource(FrontendOrigins frontendOrigins) {
         var cors = new CorsConfiguration();
-        cors.setAllowedOrigins(List.of(origin));
+        cors.setAllowedOrigins(frontendOrigins.allowedOrigins());
         cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Content-Type", "X-CSRF-TOKEN", "Idempotency-Key"));
         cors.setExposedHeaders(List.of("Location", RequestOperationLog.REQUEST_ID_HEADER));
@@ -82,7 +74,10 @@ class SecurityConfiguration {
                                 "/api/rooms/*/meeting-selection").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/rooms/*/places/search",
-                                "/api/rooms/*/place-submission/categories").authenticated()
+                                "/api/rooms/*/place-submission/categories", "/api/rooms/*/share").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/rooms/*", "/api/rooms/*/place-submission/me/candidates/*").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/rooms/*/start", "/api/rooms/*/place-submission/me/candidates").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/rooms/*/settings", "/api/rooms/*/result/confirmation").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/rooms/*/place-submission",
                                 "/api/rooms/*/place-submission/extension", "/api/rooms/*/voting",
                                 "/api/rooms/*/voting/decision", "/api/rooms/*/recovery").authenticated()

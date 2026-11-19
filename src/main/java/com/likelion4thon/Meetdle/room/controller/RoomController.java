@@ -17,6 +17,8 @@ import com.likelion4thon.Meetdle.room.dto.JoinRoomRequest;
 import com.likelion4thon.Meetdle.room.dto.MyRoomsPage;
 import com.likelion4thon.Meetdle.room.dto.RoomRef;
 import com.likelion4thon.Meetdle.room.dto.RoomState;
+import com.likelion4thon.Meetdle.room.dto.UpdateRoomRequest;
+import com.likelion4thon.Meetdle.room.service.RoomLifecycleService;
 import com.likelion4thon.Meetdle.room.service.MyRoomsService;
 import com.likelion4thon.Meetdle.room.service.RoomService;
 import com.likelion4thon.Meetdle.room.service.RoomStateService;
@@ -30,6 +32,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -50,9 +54,12 @@ public class RoomController {
     private final RoomStateService roomStateService;
     private final CommandDedup commandDedup;
     private final Idempotency idempotency;
+    private final RoomLifecycleService lifecycle;
 
     public RoomController(RoomService roomService, MyRoomsService myRoomsService,
-                          RoomStateService roomStateService, CommandDedup commandDedup, Idempotency idempotency) {
+                          RoomStateService roomStateService, CommandDedup commandDedup, Idempotency idempotency,
+                          RoomLifecycleService lifecycle) {
+        this.lifecycle = lifecycle;
         this.roomStateService = roomStateService;
         this.commandDedup = commandDedup;
         this.idempotency = idempotency;
@@ -156,6 +163,37 @@ public class RoomController {
             @Parameter(description = "대상 방 UUID. 방 생성 또는 내 방 목록 응답의 roomId 사용")
             @PathVariable UUID roomId) {
         return roomStateService.read(requireLogin(user), roomId);
+    }
+
+    @Operation(summary = "약속방 수정 및 조건 초기화", description = "방장이 현재 회원을 유지하며 입력·추천·결과를 초기화. 최신 revision과 요청 키 필요")
+    @PutMapping("/{roomId}/settings")
+    public ResponseEntity<String> update(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID roomId,
+            @RequestHeader(value = Idempotency.HEADER, required = false) String key,
+            @Valid @RequestBody UpdateRoomRequest request) {
+        var me = requireLogin(user);
+        var command = new CommandDedup.Key(me.userId(), "/api/rooms/" + roomId + "/settings", Idempotency.parseKey(key));
+        return Idempotency.toEntity(commandDedup.execute(command, idempotency.hash(request), () -> {
+            lifecycle.update(me, roomId, request);
+            return new CommandDedup.Response(204, java.util.Optional.empty(), java.util.Optional.empty());
+        }));
+    }
+
+    public record StartRoomRequest(@com.fasterxml.jackson.annotation.JsonProperty(required = true)
+                                   @jakarta.validation.constraints.Min(0) long expectedRevision) {}
+
+    @Operation(summary = "현재 인원으로 모임 시작", description = "2명 이상인 방에서 현재 가입 인원으로 정원을 확정하고 가입 마감")
+    @PostMapping("/{roomId}/start")
+    public ResponseEntity<Void> start(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID roomId,
+                                      @Valid @RequestBody StartRoomRequest request) {
+        lifecycle.start(requireLogin(user), roomId, request.expectedRevision());
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "내 지난 약속 삭제", description = "호출자의 약속 목록에서 숨김. 다가오는 약속은 409 UPCOMING_ROOM")
+    @DeleteMapping("/{roomId}")
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID roomId) {
+        lifecycle.hide(requireLogin(user), roomId);
+        return ResponseEntity.noContent().build();
     }
 
     private static AuthenticatedUser requireLogin(AuthenticatedUser user) {

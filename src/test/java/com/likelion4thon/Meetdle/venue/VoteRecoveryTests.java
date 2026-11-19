@@ -40,10 +40,91 @@ import static org.mockito.Mockito.*;
 class VoteRecoveryTests {
     @Autowired JdbcTemplate jdbc;
     @Autowired PlaceVoting voting;
+    @Autowired PlaceRegistration registration;
+    @Autowired RegistrationStore store;
+    @Autowired PickTokens picks;
     @Autowired RegistrationDeadlines deadlines;
     @Autowired VenueStateReader reader;
     @Autowired ApplicationEvents events;
     @MockitoBean RoomVenueAccess rooms;
+
+    @Test
+    void severalPlacesInOneCategoryCanCompleteAndMissingRoomCategoryCanBeReopened() {
+        prepareRegistration();
+        var round = store.latest(ROOM_ID).orElseThrow();
+        var host = HOST.userId();
+        var member = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        var third = UUID.fromString("00000000-0000-0000-0000-000000000003");
+        var first = new PlaceRegistration.Nomination(1, pick("1", Category.FOOD));
+        var second = new PlaceRegistration.Nomination(1, pick("2", Category.FOOD));
+        var firstId = registration.addNomination(ROOM_ID, host, Category.FOOD, first);
+        var secondId = registration.addNomination(ROOM_ID, host, Category.FOOD, second);
+        assertEquals(secondId, registration.addNomination(ROOM_ID, host, Category.FOOD, second));
+        assertEquals(2, store.myCandidates(round, HOST_PARTICIPANT).size());
+        registration.removeNomination(ROOM_ID, host, 1, secondId);
+        assertEquals(List.of(firstId), store.myCandidates(round, HOST_PARTICIPANT).stream().map(value -> value.candidateId()).toList());
+        registration.addNomination(ROOM_ID, member, Category.FOOD, first);
+        registration.addNomination(ROOM_ID, third, Category.FOOD, first);
+        for (var user : List.of(host, member, third)) {
+            registration.complete(ROOM_ID, user, new PlaceRegistration.Completion(1));
+        }
+        assertEquals(PLACE_SUBMISSION_CLOSED, phase());
+        assertEquals(true, project(confirmedVenueMember(host).orElseThrow()).allowedActions()
+                .contains(VenueStateReader.Action.EXTEND_COLLECTION));
+        registration.extend(ROOM_ID, host, UUID.randomUUID(),
+                new PlaceRegistration.Extension(1, PlaceRegistration.ExtensionMode.EXTEND, NOW.plusSeconds(7200)));
+        assertEquals(PLACE_SUBMISSION_OPEN, phase());
+        assertEquals(0, store.completed(store.latest(ROOM_ID).orElseThrow()).size());
+        registration.addNomination(ROOM_ID, host, Category.CAFE,
+                new PlaceRegistration.Nomination(1, pick("3", Category.CAFE)));
+        assertEquals(true, store.hasRequiredCandidates(round, store.counts(round)));
+    }
+
+    @Test
+    void singleOptionalCategoryIsSelectedAutomaticallyAndStillNeedsHostConfirmation() {
+        prepareRegistration();
+        jdbc.update("UPDATE round_category SET required = FALSE WHERE category = 'CAFE'");
+        var request = new PlaceRegistration.Nomination(1, pick("1", Category.FOOD));
+        var member = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        registration.addNomination(ROOM_ID, HOST.userId(), Category.FOOD, request);
+        registration.addNomination(ROOM_ID, member, Category.FOOD, request);
+        registration.addNomination(ROOM_ID, HOST.userId(), Category.CAFE,
+                new PlaceRegistration.Nomination(1, pick("3", Category.CAFE)));
+        registration.complete(ROOM_ID, HOST.userId(), new PlaceRegistration.Completion(1));
+        registration.complete(ROOM_ID, member, new PlaceRegistration.Completion(1));
+        registration.closeEarly(ROOM_ID, HOST.userId(), new PlaceRegistration.Completion(1));
+        assertEquals(RESULT_READY, phase());
+        var result = store.latest(ROOM_ID).map(round -> project(confirmedVenueMember(HOST.userId()).orElseThrow()).result()).orElseThrow();
+        assertEquals(2, result.selected().size());
+        assertEquals(false, result.confirmed());
+        voting.confirmResult(ROOM_ID, HOST.userId(), new PlaceVoting.ConfirmResult(1, result.resultRevision()));
+        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+    }
+
+    private void prepareRegistration() {
+        mockRoom(new AtomicReference<>(NOW));
+        jdbc.update("UPDATE room SET phase = 'PLACE_SUBMISSION_OPEN', capacity = 3 WHERE room_id = ?", ROOM_ID.toString());
+        jdbc.update("""
+                INSERT INTO venue_round (room_id, round_no, selection_id, collection_closes_at)
+                VALUES (?, 1, ?, ?)
+                """, ROOM_ID.toString(), confirmedVenueRoom().selectedMeeting().orElseThrow().selectionId().toString(),
+                RegistrationStore.utc(NOW.plusSeconds(3600)));
+        jdbc.update("""
+                INSERT INTO round_member (room_id, round_no, participant_id)
+                SELECT room_id, 1, participant_id FROM room_member WHERE room_id = ?
+                """, ROOM_ID.toString());
+        jdbc.update("""
+                INSERT INTO round_category (room_id, round_no, category, required, available, radius_meters)
+                VALUES (?, 1, 'FOOD', TRUE, TRUE, 2500), (?, 1, 'CAFE', TRUE, TRUE, 2500)
+                """, ROOM_ID.toString(), ROOM_ID.toString());
+    }
+
+    private String pick(String providerId, Category category) {
+        var meeting = confirmedVenueRoom().selectedMeeting().orElseThrow();
+        var place = new VenueStateReader.Place("Place " + providerId, "Address", meeting.station().lat(),
+                meeting.station().lng(), category, null);
+        return picks.issue(new PickTokens.Pick(ROOM_ID, meeting.selectionId(), 1, NOW.plusSeconds(900), providerId, place));
+    }
 
     @Test
     void fullCapacityClosesOnceAndRecollectionStartsWithAnEmptyBallot() {
@@ -146,6 +227,8 @@ class VoteRecoveryTests {
         var memberId = UUID.fromString("00000000-0000-0000-0000-000000000002");
         var member = confirmedVenueMember(memberId).orElseThrow();
         assertEquals(1, project(host).tieDecision().groups().size());
+        assertEquals(List.of(cafe), project(host).result().selected().stream().map(value -> value.candidateId()).toList());
+        assertEquals(false, project(host).result().confirmed());
         assertNull(project(member).tieDecision());
         assertNull(project(member).result());
 
@@ -156,7 +239,7 @@ class VoteRecoveryTests {
                 () -> voting.resolveTies(ROOM_ID, HOST.userId(), new PlaceVoting.ResolveTies(1, 1,
                         List.of(new PlaceVoting.TieChoice(Category.FOOD, cafe))))).getMessage());
         voting.resolveTies(ROOM_ID, HOST.userId(), request);
-        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+        assertEquals(RESULT_READY, phase());
         var result = project(member).result();
         assertEquals(List.of(meal, cafe), result.visitOrder());
         assertEquals(2, result.resultRevision());
@@ -170,6 +253,12 @@ class VoteRecoveryTests {
         assertEquals("STALE_RESULT", assertThrows(VenueException.class,
                 () -> voting.reorderVisit(ROOM_ID, HOST.userId(),
                         new PlaceVoting.ReorderVisit(1, 2, List.of(meal, cafe)))).getMessage());
+        assertEquals("STALE_RESULT", assertThrows(VenueException.class, () ->
+                voting.confirmResult(ROOM_ID, HOST.userId(), new PlaceVoting.ConfirmResult(1, 2))).getMessage());
+        voting.confirmResult(ROOM_ID, HOST.userId(), new PlaceVoting.ConfirmResult(1, 3));
+        voting.confirmResult(ROOM_ID, HOST.userId(), new PlaceVoting.ConfirmResult(1, 3));
+        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+        assertEquals(true, project(member).result().confirmed());
     }
 
     @Test

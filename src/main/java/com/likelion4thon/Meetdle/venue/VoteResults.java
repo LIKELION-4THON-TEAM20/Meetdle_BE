@@ -71,11 +71,11 @@ class VoteResults {
             }
         }
 
-        RoomPhase next = tied ? WAITING_FOR_HOST_DECISION : position > 0 ? FINAL_PLACE_CONFIRMED : RECOVERY_REQUIRED;
+        RoomPhase next = tied ? WAITING_FOR_HOST_DECISION : position > 0 ? RESULT_READY : RECOVERY_REQUIRED;
         store.jdbc().update("""
                 INSERT INTO venue_result (room_id, round_no, result_revision, submitted_count, computed_at, finalized_at)
                 VALUES (?, ?, 1, ?, ?, ?)
-                """, round.room(), round.number(), submittedCount, utc(now), next == FINAL_PLACE_CONFIRMED ? utc(now) : null);
+                """, round.room(), round.number(), submittedCount, utc(now), null);
         for (var standing : standings) {
             var candidate = standing.candidate();
             var aggregate = candidate.aggregate();
@@ -86,7 +86,7 @@ class VoteResults {
                     """, round.room(), round.number(), candidate.id(), standing.status(),
                     aggregate == null ? null : aggregate.like(), aggregate == null ? null : aggregate.neutral(),
                     aggregate == null ? null : aggregate.dislike(), aggregate == null ? null : candidate.score(),
-                    next == FINAL_PLACE_CONFIRMED ? standing.position() : null);
+                    standing.position());
         }
         return next;
     }
@@ -123,13 +123,13 @@ class VoteResults {
                 .map(place -> place.place().candidateId()).toList();
         saveOrder(round, order);
         store.jdbc().update("""
-                UPDATE venue_result SET finalized_at = ?, result_revision = result_revision + 1
+                UPDATE venue_result SET result_revision = result_revision + 1
                 WHERE room_id = ? AND round_no = ?
-                """, utc(now), round.room(), round.number());
+                """, round.room(), round.number());
     }
 
     boolean reorder(Round round, long revision, List<UUID> order) {
-        var result = finalized(round);
+        var result = read(round);
         if (result == null || result.resultRevision() != revision) {
             throw PlaceRegistration.conflict("STALE_RESULT");
         }
@@ -182,11 +182,11 @@ class VoteResults {
                 round.room(), round.number());
     }
 
-    FinalResult finalized(Round round) {
+    FinalResult read(Round round) {
         var header = store.jdbc().query("""
-                SELECT result_revision, submitted_count FROM venue_result
-                WHERE room_id = ? AND round_no = ? AND finalized_at IS NOT NULL
-                """, (rs, row) -> new ResultHeader(rs.getLong(1), rs.getInt(2)), round.room(), round.number());
+                SELECT result_revision, submitted_count, finalized_at FROM venue_result
+                WHERE room_id = ? AND round_no = ?
+                """, (rs, row) -> new ResultHeader(rs.getLong(1), rs.getInt(2), rs.getObject(3) != null), round.room(), round.number());
         if (header.isEmpty()) {
             return null;
         }
@@ -198,7 +198,7 @@ class VoteResults {
                 .map(PersistedPlace::place).toList();
         var result = header.get(0);
         return new FinalResult(round.number(), result.revision(), result.submittedCount(), selected, details,
-                selected.stream().map(ResultPlace::candidateId).toList());
+                selected.stream().map(ResultPlace::candidateId).toList(), result.confirmed());
     }
 
     TieDecision ties(Round round) {
@@ -234,7 +234,19 @@ class VoteResults {
                 : new Aggregate(rs.getInt("like_count"), rs.getInt("neutral_count"), rs.getInt("dislike_count"));
     }
 
-    private record ResultHeader(long revision, int submittedCount) {}
+    void confirm(Round round, long revision, Instant now) {
+        var result = read(round);
+        if (result == null || result.resultRevision() != revision) {
+            throw PlaceRegistration.conflict("STALE_RESULT");
+        }
+        if (result.confirmed()) {
+            return;
+        }
+        store.jdbc().update("UPDATE venue_result SET finalized_at = ? WHERE room_id = ? AND round_no = ?",
+                utc(now), round.room(), round.number());
+    }
+
+    private record ResultHeader(long revision, int submittedCount, boolean confirmed) {}
     private record PersistedPlace(ResultPlace place, String status, int position) {}
     private record Standing(ScoredCandidate candidate, String status, Integer position) {}
 

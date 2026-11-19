@@ -36,10 +36,14 @@ class RegistrationStateReader implements VenueStateReader {
                 actions.add(Action.OPEN_COLLECTION);
             }
         }
-        if (context.phase() == FINAL_PLACE_CONFIRMED) {
-            var result = store.latest(context.roomId()).map(results::finalized).orElse(null);
-            if (host && result != null) {
+        if (context.phase() == FINAL_PLACE_CONFIRMED || context.phase() == RESULT_READY) {
+            var result = store.latest(context.roomId()).map(results::read).orElse(null);
+            if (host && result != null && (context.phase() == FINAL_PLACE_CONFIRMED
+                    || (meetingAt != null && context.now().isBefore(meetingAt)))) {
                 actions.add(Action.REORDER_VISIT);
+                if (context.phase() == RESULT_READY && meetingAt != null && context.now().isBefore(meetingAt)) {
+                    actions.add(Action.CONFIRM_RESULT);
+                }
             }
             return new VenueState(null, null, null, null, result, null, actions);
         }
@@ -49,7 +53,11 @@ class RegistrationStateReader implements VenueStateReader {
             if (ties != null) {
                 actions.add(Action.RESOLVE_TIES);
             }
-            return new VenueState(null, null, null, ties, null, null, actions);
+            var partial = store.latest(context.roomId()).map(results::read).orElse(null);
+            if (partial != null && !partial.selected().isEmpty()) {
+                actions.add(Action.REORDER_VISIT);
+            }
+            return new VenueState(null, null, null, ties, partial, null, actions);
         }
         if (context.phase() == VOTE_REVIEW_REQUIRED) {
             return store.latest(context.roomId()).map(round -> {
@@ -64,7 +72,8 @@ class RegistrationStateReader implements VenueStateReader {
                 if (canProceed) {
                     actions.add(Action.PROCEED_WITH_VOTES);
                 }
-                return new VenueState(null, null, new VoteReview(round.number(), submitted, canExtend, canProceed),
+                return new VenueState(null, null, new VoteReview(round.number(), submitted, canExtend, canProceed,
+                        store.started(round, true)),
                         null, null, null, actions);
             }).orElseGet(() -> state(null, actions));
         }
@@ -111,7 +120,7 @@ class RegistrationStateReader implements VenueStateReader {
             actions.add(Action.SEARCH_PLACES);
             if (!completed.contains(participant)) {
                 actions.add(Action.EDIT_NOMINATION);
-                if (store.hasRequiredNominations(round, nominations)) {
+                if (!nominations.isEmpty()) {
                     actions.add(Action.COMPLETE_COLLECTION);
                 }
             }
@@ -126,8 +135,9 @@ class RegistrationStateReader implements VenueStateReader {
                 actions.add(Action.CLOSE_COLLECTION);
             }
             var cutoff = PlaceRegistration.cutoff(meetingAt, context.now());
-            if (completed.size() < store.eligibleCount(round)) {
-                if (open && early && !round.miniTimerUsed() && cutoff.isAfter(round.closesAt())) {
+            if (completed.size() < store.eligibleCount(round) || !enough) {
+                if (open && completed.size() < store.eligibleCount(round) && early && !round.miniTimerUsed()
+                        && cutoff.isAfter(round.closesAt())) {
                     actions.add(Action.START_MINI_TIMER);
                 }
                 if (context.phase() == PLACE_SUBMISSION_CLOSED && !round.extended() && cutoff.isAfter(context.now())) {
@@ -137,7 +147,8 @@ class RegistrationStateReader implements VenueStateReader {
         }
         return state(new Registration(round.number(), round.closesAt(), round.closedAt(), store.categories(round),
                 counts.stream().mapToInt(CategoryCount::count).sum(), completed, nominations,
-                host && (!open || actions.contains(Action.CLOSE_COLLECTION)) ? counts : null), actions);
+                host && (!open || actions.contains(Action.CLOSE_COLLECTION)) ? counts : null,
+                store.started(round, false), store.myCandidates(round, participant)), actions);
     }
 
     private static VenueState state(Registration registration, List<Action> actions) {
