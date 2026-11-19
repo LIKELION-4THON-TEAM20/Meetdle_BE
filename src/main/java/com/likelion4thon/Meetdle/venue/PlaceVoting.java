@@ -75,7 +75,7 @@ class PlaceVoting {
             throw conflict("DEADLINE_PASSED");
         }
         results.resolve(round, request.resultRevision(), request.choices(), snapshot.now());
-        access.recordChange(lock, FINAL_PLACE_CONFIRMED);
+        access.recordChange(lock, RESULT_READY);
     }
 
     void reorderVisit(UUID roomId, UUID userId, ReorderVisit request) {
@@ -83,8 +83,36 @@ class PlaceVoting {
         var lock = access.lockForWrite(roomId, new UserActor(userId));
         var snapshot = lock.snapshot();
         host(snapshot);
-        var round = resultRound(snapshot, request.round(), FINAL_PLACE_CONFIRMED);
+        if (snapshot.phase() != RESULT_READY && snapshot.phase() != FINAL_PLACE_CONFIRMED
+                && snapshot.phase() != WAITING_FOR_HOST_DECISION) {
+            throw conflict("WRONG_PHASE");
+        }
+        var round = resultRound(snapshot, request.round(), snapshot.phase());
+        if (snapshot.phase() != FINAL_PLACE_CONFIRMED && !snapshot.now().isBefore(meeting(snapshot).meetingAt())) {
+            throw conflict("DEADLINE_PASSED");
+        }
         if (results.reorder(round, request.resultRevision(), request.candidateIds())) {
+            access.recordChange(lock, snapshot.phase());
+        }
+    }
+
+    record ConfirmResult(@com.fasterxml.jackson.annotation.JsonProperty(required = true) int round,
+                         @com.fasterxml.jackson.annotation.JsonProperty(required = true) long resultRevision) {}
+
+    void confirmResult(UUID roomId, UUID userId, ConfirmResult request) {
+        var access = registration.access();
+        var lock = access.lockForWrite(roomId, new UserActor(userId));
+        var snapshot = lock.snapshot();
+        host(snapshot);
+        if (snapshot.phase() != RESULT_READY && snapshot.phase() != FINAL_PLACE_CONFIRMED) {
+            throw conflict("WRONG_PHASE");
+        }
+        var round = resultRound(snapshot, request.round(), snapshot.phase());
+        if (snapshot.phase() == RESULT_READY && !snapshot.now().isBefore(meeting(snapshot).meetingAt())) {
+            throw conflict("DEADLINE_PASSED");
+        }
+        results.confirm(round, request.resultRevision(), snapshot.now());
+        if (snapshot.phase() != FINAL_PLACE_CONFIRMED) {
             access.recordChange(lock, FINAL_PLACE_CONFIRMED);
         }
     }
@@ -124,7 +152,7 @@ class PlaceVoting {
             store.jdbc().update("""
                     INSERT INTO ballot_candidate (room_id, round_no, candidate_id, mode)
                     SELECT c.room_id, c.round_no, c.candidate_id,
-                        CASE WHEN r.required = TRUE AND counts.total = 1 THEN 'AUTO_SELECTED' ELSE 'VOTE' END
+                        CASE WHEN counts.total = 1 THEN 'AUTO_SELECTED' ELSE 'VOTE' END
                     FROM place_candidate c
                     JOIN round_category r ON r.room_id = c.room_id AND r.round_no = c.round_no AND r.category = c.category
                     JOIN (
@@ -236,7 +264,8 @@ class PlaceVoting {
         if (request.action() == DecisionAction.EXTEND && round.voteExtensionCount() > 0) {
             throw conflict("EXTENSION_EXHAUSTED");
         }
-        if (snapshot.phase() != VOTE_REVIEW_REQUIRED) {
+        boolean earlyProceed = request.action() == DecisionAction.PROCEED && snapshot.phase() == VOTING_OPEN;
+        if (snapshot.phase() != VOTE_REVIEW_REQUIRED && !earlyProceed) {
             throw conflict("WRONG_PHASE");
         }
         var now = snapshot.now();
@@ -296,12 +325,14 @@ class PlaceVoting {
         var lock = access.lockForWrite(room, SystemActor.DEADLINE_SCHEDULER);
         var snapshot = lock.snapshot();
         var round = store.latest(room).orElse(null);
-        if (round == null || round.voteClosesAt() == null) {
+        if (round == null) {
             return;
         }
         var now = snapshot.now();
-        if (snapshot.phase() == WAITING_FOR_HOST_DECISION) {
+        if (snapshot.phase() == WAITING_FOR_HOST_DECISION || snapshot.phase() == RESULT_READY) {
             if (!now.isBefore(meeting(snapshot).meetingAt())) {
+                setRecovery(round, snapshot.phase() == RESULT_READY ? RecoveryReason.CONFIRMATION_EXPIRED
+                        : RecoveryReason.HOST_DECISION_EXPIRED);
                 access.recordChange(lock, ENDED);
             }
             return;
@@ -316,7 +347,7 @@ class PlaceVoting {
         if (snapshot.phase() != VOTING_OPEN && snapshot.phase() != VOTE_REVIEW_REQUIRED) {
             return;
         }
-        if (now.isBefore(round.voteClosesAt())) {
+        if (round.voteClosesAt() == null || now.isBefore(round.voteClosesAt())) {
             return;
         }
         var cutoff = MeetingWindow.calculate(meeting(snapshot).meetingAt(), now).votingCutoff();
@@ -352,6 +383,9 @@ class PlaceVoting {
                 UPDATE venue_round SET vote_closed_at = ?, vote_close_reason = ?
                 WHERE room_id = ? AND round_no = ?
                 """, utc(now), reason, round.room(), round.number());
+        if (next == ENDED && List.of("NO_SUBMITTED_VOTES", "DECISION_EXPIRED").contains(reason)) {
+            setRecovery(round, RecoveryReason.valueOf(reason));
+        }
         access.recordChange(lock, next);
         events.publishEvent(new VoteClosed(lock.snapshot().roomId(), round.number(), now));
     }
@@ -363,7 +397,7 @@ class PlaceVoting {
     }
 
     static RecoveryReason recoveryReason(Round round, Instant meetingAt, Instant now) {
-        if (round.number() > 1) {
+        if (round.attempt() > 1) {
             return RecoveryReason.RETRY_EXHAUSTED;
         }
         return canRecollect(meetingAt, now) ? RecoveryReason.NO_ELIGIBLE_RESULT : RecoveryReason.INSUFFICIENT_TIME;
@@ -391,7 +425,7 @@ class PlaceVoting {
                 """, (rs, row) -> new BallotCandidate(UUID.fromString(rs.getString("candidate_id")),
                 RegistrationStore.place(rs), BallotMode.valueOf(rs.getString("mode"))), round.room(), round.number());
         Draft own = store.eligible(round, participant) ? draft(round, participant) : null;
-        return new Voting(round.number(), round.voteClosesAt(), completed, candidates, own);
+        return new Voting(round.number(), round.voteClosesAt(), completed, candidates, own, store.started(round, true));
     }
 
     private Draft draft(Round round, UUID participant) {
@@ -434,9 +468,9 @@ class PlaceVoting {
     enum DecisionAction { EXTEND, PROCEED }
 
     record Decision(
-            @Schema(description = "방 상태의 voteReview.round", example = "1")
+            @Schema(description = "방 상태의 voting.round 또는 voteReview.round", example = "1")
             int round,
-            @Schema(description = "EXTEND는 투표 마감 연장, PROCEED는 현재 제출표 집계")
+            @Schema(description = "EXTEND는 마감 후 투표 시간 연장, PROCEED는 마감 전후 제출자 1명 이상일 때 현재 제출표 집계")
             DecisionAction action,
             @Schema(description = "EXTEND의 새 투표 마감 시각. ISO 8601 형식. PROCEED에서는 생략")
             Instant closesAt

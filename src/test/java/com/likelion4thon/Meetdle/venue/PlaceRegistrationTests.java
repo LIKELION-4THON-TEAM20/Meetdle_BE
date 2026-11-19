@@ -63,6 +63,34 @@ class PlaceRegistrationTests {
 
     private Instant now = NOW;
 
+    private void verifyNamedSearch(Session host) throws Exception {
+        var meeting = confirmedVenueRoom().selectedMeeting().orElseThrow();
+        String room = ROOM_ID.toString();
+        jdbc.update("UPDATE round_category SET radius_meters = 3000 WHERE room_id = ? AND category = 'FOOD'", room);
+        var near = new Place("Near", "Address", meeting.station().lat() + Math.toDegrees(2999.8 / 6371000),
+                meeting.station().lng(), Category.FOOD, null);
+        var far = new Place("Far", "Address", meeting.station().lat() + Math.toDegrees(3000.2 / 6371000),
+                meeting.station().lng(), Category.FOOD, null);
+        when(kakao.search(meeting.station(), Category.FOOD, "Named", null, 3000, 1))
+                .thenReturn(new KakaoLocal.Page(List.of(new KakaoLocal.FoundPlace("near", near),
+                        new KakaoLocal.FoundPlace("far", far)), true));
+        when(kakao.search(meeting.station(), Category.FOOD, "Unknown", null, 3000, 1))
+                .thenReturn(new KakaoLocal.Page(List.of(), true));
+        mvc.perform(get(SEARCH).session(host.session()).param("category", "FOOD").param("q", "Named"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.radiusMeters").value(3000))
+                .andExpect(jsonPath("$.expanded").value(true)).andExpect(jsonPath("$.available").value(true))
+                .andExpect(jsonPath("$.items[0].distanceMeters").value(3000))
+                .andExpect(jsonPath("$.items[0].registrable").value(true))
+                .andExpect(jsonPath("$.items[0].pickToken").isString())
+                .andExpect(jsonPath("$.items[1].distanceMeters").value(3001))
+                .andExpect(jsonPath("$.items[1].registrable").value(false))
+                .andExpect(jsonPath("$.items[1].pickToken").doesNotExist());
+        mvc.perform(get(SEARCH).session(host.session()).param("category", "FOOD").param("q", "Unknown"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty())
+                .andExpect(jsonPath("$.available").value(true)).andExpect(jsonPath("$.totalCount").value(0));
+        jdbc.update("UPDATE round_category SET radius_meters = 2500 WHERE room_id = ? AND category = 'FOOD'", room);
+    }
+
     @Test
     void registrationLifecycleUsesSignedPicksAndProjectsOnlyOwnNominations() throws Exception {
         var fixture = confirmedVenueRoom();
@@ -87,7 +115,8 @@ class PlaceRegistrationTests {
 
         for (Category category : Category.values()) {
             when(kakao.setting(meeting.station(), category))
-                    .thenReturn(new CategorySetting(category, false, category != Category.CULTURE, 2500));
+                    .thenReturn(new CategorySetting(category, false, category != Category.CULTURE,
+                            category == Category.CULTURE ? 3000 : 2500));
         }
         when(kakao.search(eq(meeting.station()), eq(Category.FOOD), isNull(), any(), eq(2500), eq(1)))
                 .thenReturn(new KakaoLocal.Page(List.of(
@@ -98,14 +127,18 @@ class PlaceRegistrationTests {
 
         when(kakao.search(eq(meeting.station()), eq(Category.CAFE), isNull(), any(), eq(2500), eq(1)))
                 .thenReturn(new KakaoLocal.Page(List.of(new KakaoLocal.FoundPlace("125",
-                        new Place("Cafe", "Address", 37.5547, 126.9707, Category.CAFE, null))), true));
+                        new Place("Cafe", "Address", 37.5547, 126.9707, Category.CAFE, null)),
+                        new KakaoLocal.FoundPlace("126", new Place("Another cafe", "Address", 37.5547, 126.9707,
+                                Category.CAFE, null))), true));
 
         mvc.perform(get(SEARCH).param("category", "FOOD")).andExpect(status().isUnauthorized());
         var host = session(HOST.userId());
         var member = session(MEMBER);
         var observer = session(OBSERVER);
         mvc.perform(get(OPEN + "/categories").session(host.session()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.categories.length()").value(4));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.categories.length()").value(4))
+                .andExpect(jsonPath("$.categories[2].available").value(false))
+                .andExpect(jsonPath("$.categories[2].radiusMeters").value(3000));
         mvc.perform(get(OPEN + "/categories").session(member.session())).andExpect(status().isForbidden());
 
         String openBody = """
@@ -116,6 +149,15 @@ class PlaceRegistrationTests {
         postCommand(OPEN, host, openKey, openBody, 201);
         postCommand(OPEN, host, openKey, openBody.replace("FOOD", "CAFE"), 409);
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM venue_round", Integer.class));
+        verifyNamedSearch(host);
+        mvc.perform(get(SEARCH).session(member.session()).param("category", "CULTURE"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.available").value(false))
+                .andExpect(jsonPath("$.radiusMeters").value(3000)).andExpect(jsonPath("$.expanded").value(true))
+                .andExpect(jsonPath("$.items").isEmpty());
+        var cultureSetting = projection(MEMBER).categories().stream()
+                .filter(setting -> setting.category() == Category.CULTURE).findFirst().orElseThrow();
+        assertEquals(false, cultureSetting.available());
+        assertEquals(3000, cultureSetting.radiusMeters());
 
         mvc.perform(get(SEARCH).session(host.session()).param("category", "FOOD")
                         .param("bounds", "127,38,126,37")).andExpect(status().isBadRequest());
@@ -151,6 +193,13 @@ class PlaceRegistrationTests {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         String cafePath = OPEN + "/me/CAFE";
         putCommand(cafePath, observer, pick.replace(token, JsonPath.<String>read(cafe, "$.items[0].pickToken")), 204);
+        String addCafe = "{\"round\":1,\"category\":\"CAFE\",\"pickToken\":\"%s\"}"
+                .formatted(JsonPath.<String>read(cafe, "$.items[1].pickToken"));
+        postCommand(OPEN + "/me/candidates", observer, UUID.randomUUID(), addCafe, 200);
+        postCommand(OPEN + "/me/candidates", observer, UUID.randomUUID(), addCafe, 200);
+        assertEquals(2, projection(OBSERVER).myCandidates().size());
+        assertEquals(2, projection(OBSERVER).myNominations().size());
+        assertEquals(1, projection(MEMBER).myNominations().size());
         putCommand(OPEN + "/closure", member, "{\"round\":1}", 403);
 
         String mini = "{\"round\":1,\"mode\":\"MINI_TIMER\"}";
@@ -178,13 +227,21 @@ class PlaceRegistrationTests {
         putCommand(FOOD, observer, pick.replace(token, JsonPath.<String>read(fresh, "$.items[0].pickToken")), 204);
         putCommand(OPEN + "/me/completion", observer, "{\"round\":1}", 204);
         putCommand(OPEN + "/me/completion", observer, "{\"round\":1}", 204);
-        assertEquals(FINAL_PLACE_CONFIRMED, phase());
-        var result = reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(MEMBER), phase(), fixture.capacity(),
+        assertEquals(RESULT_READY, phase());
+        assertNull(venueState(MEMBER).result());
+        assertNull(venueState(MEMBER).voting());
+        var result = reader.project(new VenueStateReader.ViewContext(ROOM_ID, member(HOST.userId()), phase(), fixture.capacity(),
                 fixture.selectedMeeting().map(selected -> selected.meetingAt()), now)).result();
         assertEquals(0, result.submittedCount());
         assertEquals(List.of(Category.FOOD), result.selected().stream().map(place -> place.place().category()).toList());
         assertEquals(List.of(result.selected().get(0).candidateId()), result.visitOrder());
         assertNull(result.selected().get(0).aggregate());
+        putCommand(ROOT + "/result/confirmation", member,
+                "{\"round\":1,\"resultRevision\":1}", 403);
+        putCommand(ROOT + "/result/confirmation", host,
+                "{\"round\":1,\"resultRevision\":1}", 204);
+        assertEquals(FINAL_PLACE_CONFIRMED, phase());
+        assertEquals(true, venueState(MEMBER).result().confirmed());
 
         verifyVoting(host, member, meeting.selectionId());
     }
@@ -206,12 +263,14 @@ class PlaceRegistrationTests {
                 """, room, room);
         UUID auto = UUID.randomUUID();
         UUID competitive = UUID.randomUUID();
+        UUID otherCafe = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO place_candidate (room_id, round_no, candidate_id, category, provider_place_id,
                     name, address, lat, lng)
                 VALUES (?, 2, ?, 'FOOD', '1', 'Food', 'Address', 37, 127),
-                       (?, 2, ?, 'CAFE', '2', 'Cafe', 'Address', 37, 127)
-                """, room, auto.toString(), room, competitive.toString());
+                       (?, 2, ?, 'CAFE', '2', 'Cafe', 'Address', 37, 127),
+                       (?, 2, ?, 'CAFE', '3', 'Other cafe', 'Address', 37, 127)
+                """, room, auto.toString(), room, competitive.toString(), room, otherCafe.toString());
         now = Instant.parse("2030-01-01T02:15:00Z");
         Instant deadline = now.plusSeconds(1800);
         String start = """
@@ -222,13 +281,14 @@ class PlaceRegistrationTests {
         postCommand(ROOT + "/voting", host, key, start, 204);
         postCommand(ROOT + "/voting", host, key, start, 204);
         assertEquals(VOTING_OPEN, phase());
-        assertEquals(2, voteState(HOST.userId()).candidates().size());
+        assertEquals(3, voteState(HOST.userId()).candidates().size());
 
         String preferences = ROOT + "/preferences/me";
         String submissions = ROOT + "/vote-submissions/me";
         String edit = """
-                {"round":2,"draftRevision":0,"selections":[{"candidateId":"%s","choice":"LIKE"}]}
-                """;
+                {"round":2,"draftRevision":0,"selections":[{"candidateId":"%%s","choice":"LIKE"},
+                  {"candidateId":"%s","choice":"NEUTRAL"}]}
+                """.formatted(otherCafe);
         putCommand(submissions, host, "{\"round\":2,\"draftRevision\":0}", 409);
         putCommand(preferences, host, edit.formatted(auto), 400);
         putCommand(preferences, host, edit.formatted(competitive), 200);
@@ -268,8 +328,9 @@ class PlaceRegistrationTests {
         postCommand(decision, host, UUID.randomUUID(), "{\"round\":2,\"action\":\"PROCEED\"}", 204);
         voting.advanceDeadline(ROOM_ID);
         putCommand(submissions, host, submit, 204);
-        assertEquals(FINAL_PLACE_CONFIRMED, phase());
-        var result = venueState(MEMBER).result();
+        assertEquals(RESULT_READY, phase());
+        assertNull(venueState(MEMBER).result());
+        var result = venueState(HOST.userId()).result();
         assertEquals(1, result.submittedCount());
         assertEquals(List.of(auto, competitive), result.visitOrder());
         assertEquals(new VenueStateReader.Aggregate(1, 0, 0), result.selected().get(1).aggregate());

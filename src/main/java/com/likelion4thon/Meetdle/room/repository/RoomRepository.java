@@ -110,7 +110,7 @@ public class RoomRepository {
                                  ON ms.room_id = r.room_id AND ms.selection_id = r.current_selection_id
                           LEFT JOIN slot_option so
                                  ON so.options_id = ms.options_id AND so.slot_id = ms.slot_id
-                         WHERE m.user_id = :userId
+                         WHERE m.user_id = :userId AND m.hidden_at IS NULL
                         """)
                 .param("userId", userId.toString())
                 .query((rs, rowNum) -> new MyRoomRow(
@@ -212,7 +212,7 @@ public class RoomRepository {
     public Optional<RoomStateRow> findStateRow(UUID roomId) {
         return jdbc.sql("""
                         SELECT room_id, title, starts_on, ends_on, capacity, phase, revision, input_version,
-                               join_closed_at, inputs_closed_at
+                               join_closed_at, inputs_closed_at, started_at
                           FROM room WHERE room_id = :roomId
                         """)
                 .param("roomId", roomId.toString())
@@ -226,16 +226,21 @@ public class RoomRepository {
                         rs.getLong("revision"),
                         rs.getLong("input_version"),
                         toInstant(rs.getObject("join_closed_at", LocalDateTime.class)),
-                        toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class))))
+                        toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class)),
+                        toInstant(rs.getObject("started_at", LocalDateTime.class))))
                 .optional();
     }
 
     /** A08 회원 목록 + 각자 입력 완료 여부. 들어온 순서대로. 예: [방장(완료), 참가자(입력 중)] */
     public List<MemberStatusRow> findMemberStatuses(UUID roomId) {
         return jdbc.sql("""
-                        SELECT m.participant_id, m.user_id, m.nickname, m.role,
+                        SELECT m.participant_id, m.user_id, u.nickname, m.role, u.profile_image_url,
+                               CASE WHEN i.origin_station_id IS NOT NULL OR i.destination_station_id IS NOT NULL
+                                   OR EXISTS (SELECT 1 FROM member_availability a WHERE a.participant_id = m.participant_id)
+                                   THEN TRUE ELSE FALSE END AS input_started,
                                CASE WHEN i.completed_at IS NULL THEN FALSE ELSE TRUE END AS input_complete
                           FROM room_member m
+                          JOIN app_user u ON u.user_id = m.user_id
                           LEFT JOIN member_input i ON i.participant_id = m.participant_id
                          WHERE m.room_id = :roomId
                          ORDER BY m.joined_at, m.participant_id
@@ -246,16 +251,16 @@ public class RoomRepository {
                         UUID.fromString(rs.getString("user_id")),
                         rs.getString("nickname"),
                         RoomMember.Role.valueOf(rs.getString("role")),
-                        rs.getBoolean("input_complete")))
+                        rs.getBoolean("input_complete"), rs.getBoolean("input_started"), rs.getString("profile_image_url")))
                 .list();
     }
 
     public record RoomStateRow(UUID roomId, String title, LocalDate startsOn, LocalDate endsOn, int capacity,
                                RoomPhase phase, long revision, long inputVersion,
-                               Instant joinClosedAt, Instant inputsClosedAt) {}
+                               Instant joinClosedAt, Instant inputsClosedAt, Instant startedAt) {}
 
     public record MemberStatusRow(UUID participantId, UUID userId, String nickname, RoomMember.Role role,
-                                  boolean inputComplete) {}
+                                  boolean inputComplete, boolean inputStarted, String profileImageUrl) {}
 
     public int countMembers(UUID roomId) {
         return jdbc.sql("SELECT COUNT(*) FROM room_member WHERE room_id = :roomId")

@@ -109,7 +109,7 @@ class RoomStateApiTests {
                 .andExpect(jsonPath("$.options").isEmpty())
                 .andExpect(jsonPath("$.meeting").isEmpty())
                 .andExpect(jsonPath("$.registration").isEmpty())
-                .andExpect(jsonPath("$.allowedActions", contains("EDIT_INPUT", "COMPLETE_INPUT")));
+                .andExpect(jsonPath("$.allowedActions", contains("EDIT_INPUT", "COMPLETE_INPUT", "EDIT_ROOM")));
     }
 
     @Test
@@ -131,7 +131,7 @@ class RoomStateApiTests {
         state(HOST, ROOM)
                 .andExpect(jsonPath("$.myInput.originStation.name").value("강남"))
                 .andExpect(jsonPath("$.myInput.completedAt").isString())
-                .andExpect(jsonPath("$.allowedActions", empty()));
+                .andExpect(jsonPath("$.allowedActions", contains("EDIT_ROOM", "START_ROOM")));
     }
 
     @Test
@@ -141,7 +141,7 @@ class RoomStateApiTests {
 
         state(HOST, ROOM)
                 .andExpect(jsonPath("$.inputProgress.completedCount").value(2))
-                .andExpect(jsonPath("$.allowedActions", contains("CALCULATE_OPTIONS")));
+                .andExpect(jsonPath("$.allowedActions", contains("CALCULATE_OPTIONS", "EDIT_ROOM", "START_ROOM")));
         state(MEMBER2, ROOM)
                 .andExpect(jsonPath("$.allowedActions", contains("EDIT_INPUT", "COMPLETE_INPUT")));
     }
@@ -159,7 +159,7 @@ class RoomStateApiTests {
                 .andExpect(jsonPath("$.options.regions[0].travel", hasSize(2)))
                 // 가입 마감 뒤라 초대는 더 안 보여줌
                 .andExpect(jsonPath("$.invite").isEmpty())
-                .andExpect(jsonPath("$.allowedActions", contains("SELECT_MEETING")));
+                .andExpect(jsonPath("$.allowedActions", contains("SELECT_MEETING", "EDIT_ROOM")));
 
         state(MEMBER, ROOM)
                 .andExpect(jsonPath("$.options.regions[0].station.name").isString())

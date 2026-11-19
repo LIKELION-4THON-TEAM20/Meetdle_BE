@@ -161,6 +161,51 @@ class MeetingSelectionApiTests {
     }
 
     @Test
+    void reselectPreservesInputsAndOptionsAndUpdatesRoomState() throws Exception {
+        String first = JsonPath.read(select(HOST, optionsId, slot19, region1, null)
+                .andReturn().getResponse().getContentAsString(), "$.selectionId");
+        String before = state();
+        // The original slot has become too close, but the next stored slot is still eligible.
+        clock.set(Instant.parse("2030-01-02T07:00:01Z"));
+        String selected = select(HOST, optionsId, slot20, region2, first)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String second = JsonPath.read(selected, "$.selectionId");
+        String after = state();
+        assertThat(second).isNotEqualTo(first);
+        for (String path : new String[] {"$.dates", "$.myInput", "$.options", "$.inputVersion"}) {
+            assertThat((Object) JsonPath.read(after, path)).isEqualTo((Object) JsonPath.read(before, path));
+        }
+        assertThat((String) JsonPath.read(after, "$.phase")).isEqualTo("REGION_CONFIRMED");
+        assertThat((String) JsonPath.read(after, "$.meeting.selectionId")).isEqualTo(second);
+        assertThat((Object) JsonPath.read(after, "$.meeting.station"))
+                .isEqualTo((Object) JsonPath.read(selected, "$.station"));
+        assertThat((String) JsonPath.read(after, "$.meeting.meetingAt")).isEqualTo("2030-01-02T11:00:00Z");
+        assertThat((String) JsonPath.read(after, "$.deadlinePolicy.registrationCutoff"))
+                .isEqualTo("2030-01-02T08:00:00Z");
+        assertThat((String) JsonPath.read(after, "$.deadlinePolicy.votingCutoff"))
+                .isEqualTo("2030-01-02T08:30:00Z");
+        assertThat(JsonPath.<java.util.List<String>>read(after, "$.allowedActions"))
+                .contains("SELECT_MEETING", "OPEN_COLLECTION");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM venue_round", Integer.class)).isZero();
+    }
+
+    @Test
+    void rejectsSlotsWithLessThanThreeHoursRemainingAtConfirmationTime() throws Exception {
+        clock.set(Instant.parse("2030-01-02T07:00:01Z"));
+        select(HOST, optionsId, slot19, region1, null)
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("INVALID_OPTION"))
+                .andExpect(jsonPath("$.details.slotId").value("TOO_CLOSE"));
+        clock.set(Instant.parse("2030-01-02T07:00:00Z"));
+        select(HOST, optionsId, slot19, region1, null).andExpect(status().isOk());
+    }
+
+    private String state() throws Exception {
+        return mockMvc.perform(get("/api/rooms/" + ROOM + "/state")
+                        .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    }
+
+    @Test
     void sameChoiceAgainChangesNothing() throws Exception {
         String first = JsonPath.read(select(HOST, optionsId, slot19, region1, null)
                 .andReturn().getResponse().getContentAsString(), "$.selectionId");

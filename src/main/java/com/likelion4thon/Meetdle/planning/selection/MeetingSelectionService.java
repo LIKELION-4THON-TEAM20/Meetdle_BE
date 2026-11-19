@@ -2,6 +2,7 @@ package com.likelion4thon.Meetdle.planning.selection;
 
 import com.likelion4thon.Meetdle.common.error.ApiException;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
+import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomMember;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.contract.SelectedMeeting;
@@ -99,6 +100,10 @@ public class MeetingSelectionService {
             // 예: 19시 칸을 19시 10분에 확정하려고 함
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_OPTION", "이미 지난 시간이에요.",
                     Map.of("slotId", "PASSED"));
+        }
+        if (now.isAfter(MeetingWindow.calculate(slot.meetingAt(), now).registrationCutoff())) {
+            throw new ApiException(HttpStatus.CONFLICT, "INVALID_OPTION", "약속까지 3시간 이상 남은 일시를 선택해 주세요.",
+                    Map.of("slotId", "TOO_CLOSE"));
         }
 
         // 같은 일시·지역을 다시 보내면 새로 만들지 않고 지금 선택을 그대로 돌려준다 (버튼 두 번 눌림 대비)

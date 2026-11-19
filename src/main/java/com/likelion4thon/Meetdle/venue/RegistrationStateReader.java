@@ -36,37 +36,36 @@ class RegistrationStateReader implements VenueStateReader {
                 actions.add(Action.OPEN_COLLECTION);
             }
         }
-        if (context.phase() == FINAL_PLACE_CONFIRMED) {
-            var result = store.latest(context.roomId()).map(results::finalized).orElse(null);
-            if (host && result != null) {
+        if (context.phase() == FINAL_PLACE_CONFIRMED || context.phase() == RESULT_READY) {
+            var round = store.latest(context.roomId()).orElse(null);
+            var result = round != null && (host || context.phase() == FINAL_PLACE_CONFIRMED)
+                    ? results.read(round) : null;
+            if (host && result != null && (context.phase() == FINAL_PLACE_CONFIRMED
+                    || (meetingAt != null && context.now().isBefore(meetingAt)))) {
                 actions.add(Action.REORDER_VISIT);
+                if (context.phase() == RESULT_READY && meetingAt != null && context.now().isBefore(meetingAt)) {
+                    actions.add(Action.CONFIRM_RESULT);
+                }
             }
-            return new VenueState(null, null, null, null, result, null, actions);
+            return new VenueState(null, votingStatus(round), null, null, result, null, actions);
         }
-        if (context.phase() == WAITING_FOR_HOST_DECISION && host
-                && meetingAt != null && context.now().isBefore(meetingAt)) {
-            var ties = store.latest(context.roomId()).map(results::ties).orElse(null);
+        if (context.phase() == WAITING_FOR_HOST_DECISION) {
+            var round = store.latest(context.roomId()).orElse(null);
+            boolean canReview = host && meetingAt != null && context.now().isBefore(meetingAt);
+            var ties = round != null && canReview ? results.ties(round) : null;
             if (ties != null) {
                 actions.add(Action.RESOLVE_TIES);
             }
-            return new VenueState(null, null, null, ties, null, null, actions);
+            var partial = round != null && canReview ? results.read(round) : null;
+            if (partial != null && !partial.selected().isEmpty()) {
+                actions.add(Action.REORDER_VISIT);
+            }
+            return new VenueState(null, votingStatus(round), null, ties, partial, null, actions);
         }
         if (context.phase() == VOTE_REVIEW_REQUIRED) {
-            return store.latest(context.roomId()).map(round -> {
-                var submitted = voting.submitted(round);
-                boolean beforeCutoff = meetingAt != null
-                        && context.now().isBefore(MeetingWindow.calculate(meetingAt, context.now()).votingCutoff());
-                boolean canExtend = host && beforeCutoff && round.voteExtensionCount() == 0;
-                boolean canProceed = host && beforeCutoff && !submitted.isEmpty();
-                if (canExtend) {
-                    actions.add(Action.EXTEND_VOTE);
-                }
-                if (canProceed) {
-                    actions.add(Action.PROCEED_WITH_VOTES);
-                }
-                return new VenueState(null, null, new VoteReview(round.number(), submitted, canExtend, canProceed),
-                        null, null, null, actions);
-            }).orElseGet(() -> state(null, actions));
+            return store.latest(context.roomId()).map(round -> new VenueState(null, null,
+                    voteReview(round, context, actions), null, null, null, actions))
+                    .orElseGet(() -> state(null, actions));
         }
         if (context.phase() == RECOVERY_REQUIRED || context.phase() == ENDED) {
             return store.latest(context.roomId()).filter(round -> round.recoveryReason() != null).map(round -> {
@@ -77,7 +76,7 @@ class RegistrationStateReader implements VenueStateReader {
                         actions.add(Action.RECOLLECT);
                     }
                 }
-                return new VenueState(null, null, null, null, null, new Recovery(round.number(), reason), actions);
+                return new VenueState(null, votingStatus(round), null, null, null, new Recovery(round.number(), reason), actions);
             }).orElseGet(() -> state(null, actions));
         }
         if (context.phase() == VOTING_OPEN) {
@@ -91,7 +90,7 @@ class RegistrationStateReader implements VenueStateReader {
                         actions.add(Action.SUBMIT_VOTE);
                     }
                 }
-                return new VenueState(null, ballot, null, null, null, null, actions);
+                return new VenueState(null, ballot, voteReview(round, context, actions), null, null, null, actions);
             }).orElseGet(() -> state(null, actions));
         }
         if (context.phase() != PLACE_SUBMISSION_OPEN && context.phase() != PLACE_SUBMISSION_CLOSED) {
@@ -111,7 +110,7 @@ class RegistrationStateReader implements VenueStateReader {
             actions.add(Action.SEARCH_PLACES);
             if (!completed.contains(participant)) {
                 actions.add(Action.EDIT_NOMINATION);
-                if (store.hasRequiredNominations(round, nominations)) {
+                if (!nominations.isEmpty()) {
                     actions.add(Action.COMPLETE_COLLECTION);
                 }
             }
@@ -126,8 +125,9 @@ class RegistrationStateReader implements VenueStateReader {
                 actions.add(Action.CLOSE_COLLECTION);
             }
             var cutoff = PlaceRegistration.cutoff(meetingAt, context.now());
-            if (completed.size() < store.eligibleCount(round)) {
-                if (open && early && !round.miniTimerUsed() && cutoff.isAfter(round.closesAt())) {
+            if (completed.size() < store.eligibleCount(round) || !enough) {
+                if (open && completed.size() < store.eligibleCount(round) && early && !round.miniTimerUsed()
+                        && cutoff.isAfter(round.closesAt())) {
                     actions.add(Action.START_MINI_TIMER);
                 }
                 if (context.phase() == PLACE_SUBMISSION_CLOSED && !round.extended() && cutoff.isAfter(context.now())) {
@@ -137,7 +137,33 @@ class RegistrationStateReader implements VenueStateReader {
         }
         return state(new Registration(round.number(), round.closesAt(), round.closedAt(), store.categories(round),
                 counts.stream().mapToInt(CategoryCount::count).sum(), completed, nominations,
-                host && (!open || actions.contains(Action.CLOSE_COLLECTION)) ? counts : null), actions);
+                host && (!open || actions.contains(Action.CLOSE_COLLECTION)) ? counts : null,
+                store.started(round, false), store.myCandidates(round, participant)), actions);
+    }
+
+    private VoteReview voteReview(RegistrationStore.Round round, ViewContext context, List<Action> actions) {
+        var submitted = voting.submitted(round);
+        boolean host = context.viewer().role() == Role.HOST;
+        boolean beforeCutoff = context.meetingAt().map(meetingAt -> context.now()
+                .isBefore(MeetingWindow.calculate(meetingAt, context.now()).votingCutoff())).orElse(false);
+        boolean canExtend = host && beforeCutoff && context.phase() == VOTE_REVIEW_REQUIRED
+                && round.voteExtensionCount() == 0;
+        boolean canProceed = host && beforeCutoff && !submitted.isEmpty();
+        if (canExtend) {
+            actions.add(Action.EXTEND_VOTE);
+        }
+        if (canProceed) {
+            actions.add(Action.PROCEED_WITH_VOTES);
+        }
+        return new VoteReview(round.number(), submitted, canExtend, canProceed, store.started(round, true));
+    }
+
+    private Voting votingStatus(RegistrationStore.Round round) {
+        if (round == null || round.voteClosesAt() == null) {
+            return null; // Every category was automatically selected; no voting took place.
+        }
+        return new Voting(round.number(), round.voteClosesAt(), voting.submitted(round), List.of(), null,
+                store.started(round, true));
     }
 
     private static VenueState state(Registration registration, List<Action> actions) {

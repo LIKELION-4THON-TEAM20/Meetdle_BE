@@ -37,7 +37,10 @@ public record RoomState(
         TieDecision tieDecision,
         FinalResult result,
         VenueStateReader.Recovery recovery,
-        List<String> allowedActions
+        List<String> allowedActions,
+        Instant startedAt,
+        String shareUrl,
+        DeadlinePolicy deadlinePolicy
 ) {
 
     /** 예: 정원 4명 중 2명 완료 → {completedCount: 2, capacity: 4} */
@@ -45,16 +48,21 @@ public record RoomState(
 
     public record MyMember(UUID participantId, RoomMember.Role role, boolean canRegister, boolean canVote) {}
 
-    public record MemberStatus(UUID participantId, String nickname, RoomMember.Role role, boolean inputComplete) {}
+    public enum CompletionStatus { NOT_STARTED, IN_PROGRESS, COMPLETED }
+
+    public record MemberStatus(UUID participantId, String nickname, RoomMember.Role role, boolean inputComplete,
+                               CompletionStatus inputStatus, String profileImageUrl) {}
 
     /** 장소 등록·투표에서 이름별 완료 여부. 누가 뭘 골랐는지는 없음 */
-    public record CompletionEntry(UUID participantId, String nickname, boolean completed) {}
+    public record CompletionEntry(UUID participantId, String nickname, boolean completed,
+                                  CompletionStatus status, String profileImageUrl) {}
 
     public record Registration(int round, Instant closesAt, Instant closedAt, Progress progress,
                                List<CompletionEntry> completion, List<VenueStateReader.CategorySetting> categories,
                                int uniqueCandidateCount, boolean myCompleted,
                                List<VenueStateReader.Place> myNominations,
-                               List<VenueStateReader.CategoryCount> categoryCounts) {}
+                               List<VenueStateReader.CategoryCount> categoryCounts,
+                               List<VenueStateReader.Nomination> myCandidates) {}
 
     public record Voting(int round, Instant closesAt, Progress progress, List<CompletionEntry> completion,
                          List<VenueStateReader.BallotCandidate> candidates, VenueStateReader.Draft myDraft) {}
@@ -68,5 +76,8 @@ public record RoomState(
 
     public record FinalResult(int round, long resultRevision, SelectedMeeting meeting, int submittedCount,
                               List<VenueStateReader.ResultPlace> selected, List<VenueStateReader.ResultPlace> details,
-                              List<UUID> visitOrder) {}
+                              List<UUID> visitOrder, boolean confirmed) {}
+
+    public record DeadlinePolicy(int registrationMinimumMinutes, Instant registrationCutoff,
+                                 int votingMinimumMinutes, Instant votingCutoff) {}
 }

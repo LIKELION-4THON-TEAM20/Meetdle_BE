@@ -35,6 +35,36 @@ class PlaceRegistrationController {
         this.voting = voting;
     }
 
+    record AddCandidate(int round, Category category, String pickToken) {}
+    record AddedCandidate(UUID candidateId) {}
+
+    @Operation(summary = "내 장소 후보 추가", description = "동일 카테고리 여러 장소 허용. 같은 장소를 다시 보내면 기존 후보 ID 반환")
+    @PostMapping("/place-submission/me/candidates")
+    AddedCandidate addCandidate(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+                                 @RequestBody AddCandidate request) {
+        if (request.category() == null) {
+            throw new VenueException(400, "INVALID_REQUEST");
+        }
+        return new AddedCandidate(registration.addNomination(roomId, user.userId(), request.category(),
+                new PlaceRegistration.Nomination(request.round(), request.pickToken())));
+    }
+
+    @Operation(summary = "내 장소 후보 한 곳 삭제")
+    @DeleteMapping("/place-submission/me/candidates/{candidateId}")
+    ResponseEntity<Void> removeCandidate(@PathVariable UUID roomId, @PathVariable UUID candidateId,
+            @RequestParam int round, @AuthenticationPrincipal AuthenticatedUser user) {
+        registration.removeNomination(roomId, user.userId(), round, candidateId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "일반 결과 최종 확정", description = "방장이 RESULT_READY에서 최신 결과 버전을 확인하고 확정")
+    @PutMapping("/result/confirmation")
+    ResponseEntity<Void> confirmResult(@PathVariable UUID roomId, @AuthenticationPrincipal AuthenticatedUser user,
+                                        @RequestBody PlaceVoting.ConfirmResult request) {
+        voting.confirmResult(roomId, user.userId(), request);
+        return ResponseEntity.noContent().build();
+    }
+
     @Operation(summary = "동점 장소 확정",
             description = "방장이 최신 tieDecision을 조회한 뒤 동점 카테고리마다 최종 방문 장소 한 곳 선택",
             parameters = @Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true,
@@ -84,8 +114,8 @@ class PlaceRegistrationController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "미제출 투표 처리 결정",
-            description = "투표 검토 단계에서 방장이 마감 연장 또는 현재 제출표 집계 선택",
+    @Operation(summary = "투표 조기 마감 또는 미제출 투표 처리 결정",
+            description = "방장이 PROCEED로 마감 전후 제출표를 집계하거나, 마감 후 EXTEND로 시간을 연장. 집계는 제출자 1명 이상 필요. 마감까지 기다리기는 API 호출 없이 모달만 닫음",
             parameters = @Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true,
                     description = "같은 로그인 세션에서 GET /api/me로 받은 csrfToken 사용"),
             responses = {
@@ -173,7 +203,7 @@ class PlaceRegistrationController {
     }
 
     @Operation(summary = "확정 지역 주변 장소 검색",
-            description = "확정 역 주변에서 카테고리별 장소 검색. 등록 가능한 결과의 pickToken을 후보 등록에 사용",
+            description = "확정 역 기준으로 검색. 장소명 q 검색은 반경 밖도 distanceMeters와 registrable=false로 반환하며 pickToken은 없음. 반경과 확장 여부는 radiusMeters와 expanded 사용",
             responses = {
                 @ApiResponse(responseCode = "200", description = "검색 결과 및 다음 페이지 번호 반환", useReturnTypeSchema = true)
             })
@@ -188,7 +218,7 @@ class PlaceRegistrationController {
             @RequestParam(required = false) String q,
             @Parameter(description = "검색 페이지 번호. 1~3 지정, 기본값 1. 다음 호출에 nextPage 사용", example = "1")
             @RequestParam(defaultValue = "1") int page,
-            @Parameter(description = "지도 범위. 서쪽 경도,남쪽 위도,동쪽 경도,북쪽 위도 순의 쉼표 구분 좌표", example = "126.97,37.53,127.02,37.58")
+            @Parameter(description = "주변 검색의 지도 범위. 서쪽 경도,남쪽 위도,동쪽 경도,북쪽 위도 순. q가 있으면 범위 제한 없이 장소명을 검색", example = "126.97,37.53,127.02,37.58")
             @RequestParam(required = false) String bounds) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(registration.search(roomId, user.userId(), category, q, page, bounds));

@@ -189,7 +189,7 @@ class PlaceRegistration {
 
         int radius = setting.radiusMeters();
         if (!setting.available()) {
-            return new Search(List.of(), null, radius, radius > 2500, false);
+            return new Search(List.of(), null, radius, radius > 2500, false, 0);
         }
         var results = kakao.search(meeting.station(), category, query == null ? null : query.strip(), bounds, radius, page);
         var items = results.items().stream().map(found -> {
@@ -197,12 +197,23 @@ class PlaceRegistration {
             boolean registrable = number > 0 && meters <= radius;
             String token = registrable ? tokens.issue(new PickTokens.Pick(room, meeting.selectionId(), number,
                     snapshot.now().plus(Duration.ofMinutes(15)), found.id(), found.place())) : null;
-            return new SearchItem(found.place(), (int) Math.round(meters), token, registrable);
+            return new SearchItem(found.place(), (int) Math.ceil(meters), token, registrable);
         }).toList();
-        return new Search(items, page < 3 && !results.end() ? page + 1 : null, radius, radius > 2500, true);
+        return new Search(items, page < 3 && !results.end() ? page + 1 : null, radius, radius > 2500, true, results.totalCount());
     }
 
     void nominate(UUID room, UUID user, Category category, Nomination request) {
+        saveNomination(room, user, category, request, false);
+    }
+
+    UUID addNomination(UUID room, UUID user, Category category, Nomination request) {
+        if (request.pickToken() == null) {
+            throw new VenueException(400, "INVALID_PICK");
+        }
+        return saveNomination(room, user, category, request, true);
+    }
+
+    private UUID saveNomination(UUID room, UUID user, Category category, Nomination request, boolean append) {
         RoomVenueAccess access = access();
         var lock = access.lockForWrite(room, new RoomVenueAccess.UserActor(user));
         var snapshot = lock.snapshot();
@@ -233,7 +244,28 @@ class PlaceRegistration {
                 throw new VenueException(400, "OUT_OF_RADIUS");
             }
         }
+        if (append) {
+            var candidate = store.add(round, participant, pick, snapshot.now());
+            access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+            return candidate;
+        }
         if (store.nominate(round, participant, category, pick, snapshot.now())) {
+            access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+        }
+        return null;
+    }
+
+    void removeNomination(UUID room, UUID user, int roundNumber, UUID candidateId) {
+        var access = access();
+        var lock = access.lockForWrite(room, new RoomVenueAccess.UserActor(user));
+        var snapshot = lock.snapshot();
+        var round = current(snapshot, roundNumber);
+        requireOpen(snapshot, round);
+        var participant = participant(snapshot, round);
+        if (store.completed(round).contains(participant)) {
+            throw conflict("ALREADY_COMPLETED");
+        }
+        if (store.remove(round, participant, candidateId)) {
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
         }
     }
@@ -246,13 +278,13 @@ class PlaceRegistration {
         UUID participant = participant(snapshot, round);
         var completed = store.completed(round);
         if ((snapshot.phase() == PLACE_SUBMISSION_OPEN || snapshot.phase() == PLACE_SUBMISSION_CLOSED
-                || snapshot.phase() == FINAL_PLACE_CONFIRMED)
+                || snapshot.phase() == RESULT_READY || snapshot.phase() == FINAL_PLACE_CONFIRMED)
                 && completed.contains(participant)) {
             return;
         }
         requireOpen(snapshot, round);
-        if (!store.hasRequiredNominations(round, store.nominations(round, participant))) {
-            throw conflict("REQUIRED_NOMINATIONS_MISSING");
+        if (store.nominations(round, participant).isEmpty()) {
+            throw conflict("NOMINATION_REQUIRED");
         }
         store.jdbc().update("""
                 UPDATE round_member SET registration_completed_at = ?
@@ -306,7 +338,8 @@ class PlaceRegistration {
                 throw conflict("EXTENSION_EXHAUSTED");
             }
             int completed = store.completed(round).size();
-            if (!phaseMatches || completed >= store.eligibleCount(round)
+            boolean missingRequired = !store.hasRequiredCandidates(round, store.counts(round));
+            if (!phaseMatches || (completed >= store.eligibleCount(round) && (mini || !missingRequired))
                     || (mini && !canStartEarly(snapshot.capacity(), completed))) {
                 throw conflict("NOT_ALLOWED");
             }
@@ -332,6 +365,10 @@ class PlaceRegistration {
                         mini_timer_used_at = COALESCE(?, mini_timer_used_at)
                     WHERE room_id = ? AND round_no = ?
                     """, utc(deadline), mini ? null : utc(now), mini ? utc(now) : null, round.room(), round.number());
+            if (!mini && missingRequired) {
+                store.jdbc().update("UPDATE round_member SET registration_completed_at = NULL WHERE room_id = ? AND round_no = ?",
+                        round.room(), round.number());
+            }
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
             return new Extended(round.number(), deadline);
         });
@@ -349,6 +386,8 @@ class PlaceRegistration {
         if (snapshot.phase() == PLACE_SUBMISSION_OPEN && !now.isBefore(round.closesAt())) {
             close(access, lock, round, round.closesAt(), "DEADLINE");
         } else if (snapshot.phase() == PLACE_SUBMISSION_CLOSED && now.isAfter(cutoff(meeting(snapshot).meetingAt(), now))) {
+            store.jdbc().update("UPDATE venue_round SET recovery_reason = 'REGISTRATION_EXPIRED' WHERE room_id = ? AND round_no = ?",
+                    round.room(), round.number());
             access.recordChange(lock, ENDED);
         }
     }
@@ -359,8 +398,8 @@ class PlaceRegistration {
                 UPDATE venue_round SET collection_closed_at = ?, collection_close_reason = ?
                 WHERE room_id = ? AND round_no = ?
                 """, utc(at), reason, round.room(), round.number());
-        boolean automatic = store.finalizeIfAutomatic(round, lock.snapshot().now());
-        access.recordChange(lock, automatic ? FINAL_PLACE_CONFIRMED : PLACE_SUBMISSION_CLOSED);
+        boolean automatic = store.prepareIfAutomatic(round, lock.snapshot().now());
+        access.recordChange(lock, automatic ? RESULT_READY : PLACE_SUBMISSION_CLOSED);
     }
 
     static boolean canCloseEarly(int capacity, int complete) {
@@ -530,6 +569,7 @@ class PlaceRegistration {
     ) {}
     record Extended(int round, Instant closesAt) {}
     record Availability(UUID selectionId, List<CategorySetting> categories) {}
-    record Search(List<SearchItem> items, Integer nextPage, int radiusMeters, boolean expanded, boolean available) {}
+    record Search(List<SearchItem> items, Integer nextPage, int radiusMeters, boolean expanded, boolean available,
+                  Integer totalCount) {}
     record SearchItem(Place place, int distanceMeters, String pickToken, boolean registrable) {}
 }

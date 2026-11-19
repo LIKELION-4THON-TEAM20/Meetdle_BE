@@ -68,7 +68,8 @@ class AuthFlowTests {
         String oldSessionId = session.getId();
         String invite = "A".repeat(43);
         String state = start(session, invite);
-        when(kakao.profile("code")).thenReturn(new KakaoClient.Profile(UUID.randomUUID().toString(), "Meetdle"));
+        when(kakao.profile("code")).thenReturn(new KakaoClient.Profile(UUID.randomUUID().toString(), "Meetdle",
+                "https://example.com/avatar.jpg"));
         mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", state).param("code", "code"))
                 .andExpect(status().isFound())
                 .andExpect(header().string("Location", "http://localhost:5173/invite/" + invite));
@@ -79,6 +80,7 @@ class AuthFlowTests {
                 .andExpect(jsonPath("$.code").value("OAUTH_STATE_INVALID"));
         String body = mvc.perform(get("/api/me").session(session))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.user.nickname").value("Meetdle"))
+                .andExpect(jsonPath("$.user.profileImageUrl").value("https://example.com/avatar.jpg"))
                 .andReturn().getResponse().getContentAsString();
         String csrf = JsonPath.read(body, "$.csrfToken");
         mvc.perform(post("/api/auth/logout").session(session)).andExpect(status().isForbidden());
@@ -105,6 +107,23 @@ class AuthFlowTests {
                 .andExpect(status().isFound())
                 .andExpect(header().string("Location", "http://localhost:5173/rooms?loginError=PROVIDER_UNAVAILABLE"));
         mvc.perform(get("/api/me").session(session)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void memberShareRestoresRoomAfterLoginAndRejectsExternalReturnPaths() throws Exception {
+        var session = new MockHttpSession();
+        start(session, null);
+        String path = "/rooms/" + UUID.randomUUID();
+        String location = mvc.perform(get("/api/auth/kakao/start").session(session).param("returnTo", path))
+                .andExpect(status().isFound()).andReturn().getResponse().getRedirectedUrl();
+        String state = UriComponentsBuilder.fromUriString(location).build().getQueryParams().getFirst("state");
+        when(kakao.profile("room-code")).thenReturn(new KakaoClient.Profile(UUID.randomUUID().toString(), "Member"));
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", state).param("code", "room-code"))
+                .andExpect(status().isFound()).andExpect(header().string("Location", "http://localhost:5173" + path));
+        mvc.perform(get("/api/auth/kakao/start").param("returnTo", "https://example.com"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/auth/kakao/start").param("returnTo", path).param("inviteToken", "a".repeat(43)))
+                .andExpect(status().isBadRequest());
     }
 
     private String start(MockHttpSession session, String invite) throws Exception {
