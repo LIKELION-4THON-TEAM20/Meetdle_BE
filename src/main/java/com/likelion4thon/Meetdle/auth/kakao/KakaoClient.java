@@ -76,10 +76,29 @@ public class KakaoClient {
         String imageUrl = null;
         if (user.get("kakao_account") instanceof Map<?, ?> account
                 && account.get("profile") instanceof Map<?, ?> profile
-                && profile.get("profile_image_url") instanceof String image && image.startsWith("https://")) {
-            imageUrl = image;
+                && !Boolean.TRUE.equals(profile.get("is_default_image"))
+                && profile.get("profile_image_url") instanceof String image) {
+            imageUrl = secureImageUrl(image);
         }
         return new Profile(id.toString(), nickname.substring(0, nickname.offsetByCodePoints(0, length)), imageUrl);
+    }
+
+    /**
+     * 카카오는 사진 주소를 http://로 줄 때가 있어서, https 페이지에서 쓸 수 있게 https://로 바꾼다.
+     * 예: http://k.kakaocdn.net/a.jpg → https://k.kakaocdn.net/a.jpg, 그 밖의 형식은 null
+     */
+    static String secureImageUrl(String url) {
+        if (url == null) {
+            return null;
+        }
+        String trimmed = url.strip();
+        if (trimmed.regionMatches(true, 0, "https://", 0, 8)) {
+            return "https://" + trimmed.substring(8);
+        }
+        if (trimmed.regionMatches(true, 0, "http://", 0, 7)) {
+            return "https://" + trimmed.substring(7);
+        }
+        return null;
     }
 
     public record Profile(String id, String nickname, String profileImageUrl) {
