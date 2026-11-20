@@ -1,3 +1,4 @@
+
 package com.likelion4thon.Meetdle.planning.station;
 
 import com.likelion4thon.Meetdle.contract.SelectedMeeting.Station;
@@ -36,13 +37,31 @@ public class StationRepository {
      * @param typedName 사용자가 친 그대로 (예: 서울역). 이 이름과 똑같은 역도 맨 앞으로 올린다
      */
     public List<Station> search(String query, String typedName, int limit) {
-        String escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+
+        // [기존] 백슬래시를 LIKE 이스케이프 문자로 사용
+        // String escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+
+        // [수정] MySQL의 백슬래시 해석 문제를 방지하기 위해 '!' 사용
+        String escaped = query.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+
         return jdbc.sql("""
                         SELECT station_id, name, lines_json, lat, lng
                           FROM station
-                         WHERE selectable = TRUE AND name LIKE :contains ESCAPE '\\'
+
+                         -- [기존] 백슬래시 ESCAPE 사용
+                         -- WHERE selectable = TRUE AND name LIKE :contains ESCAPE '\\'
+
+                         -- [수정] '!'를 ESCAPE 문자로 사용
+                         WHERE selectable = TRUE AND name LIKE :contains ESCAPE '!'
+
                          ORDER BY CASE WHEN name = :exact OR name = :typed THEN 0
-                                       WHEN name LIKE :prefix ESCAPE '\\' THEN 1
+
+                                       -- [기존] 백슬래시 ESCAPE 사용
+                                       -- WHEN name LIKE :prefix ESCAPE '\\' THEN 1
+
+                                       -- [수정] '!'를 ESCAPE 문자로 사용
+                                       WHEN name LIKE :prefix ESCAPE '!' THEN 1
+
                                        ELSE 2 END,
                                   name
                          LIMIT :limit
