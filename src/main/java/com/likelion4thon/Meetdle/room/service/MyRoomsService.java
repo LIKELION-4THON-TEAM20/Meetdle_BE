@@ -5,9 +5,11 @@ import com.likelion4thon.Meetdle.common.time.ServiceZone;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
 import com.likelion4thon.Meetdle.room.domain.MyRoomRow;
+import com.likelion4thon.Meetdle.room.domain.RoomMemberProfileRow;
 import com.likelion4thon.Meetdle.room.dto.DateRange;
 import com.likelion4thon.Meetdle.room.dto.MyRoomSummary;
 import com.likelion4thon.Meetdle.room.dto.MyRoomsPage;
+import com.likelion4thon.Meetdle.room.dto.ParticipantProfile;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * A24 내 약속 목록 (홈 화면 SC-16).
@@ -82,7 +85,12 @@ public class MyRoomsService {
         String nextCursor = end < sorted.size()
                 ? Cursor.encode(scope, user.userId(), page.get(page.size() - 1).key())
                 : null;
-        return new MyRoomsPage(page.stream().map(Entry::summary).toList(), nextCursor);
+        var profiles = roomRepository.findMemberProfiles(page.stream().map(entry -> entry.row().roomId()).toList())
+                .stream().collect(Collectors.groupingBy(RoomMemberProfileRow::roomId,
+                        Collectors.mapping(member -> new ParticipantProfile(member.participantId(), member.nickname(),
+                                member.profileImageUrl()), Collectors.toList())));
+        return new MyRoomsPage(page.stream().map(entry -> entry.summary(
+                profiles.getOrDefault(entry.row().roomId(), List.of()))).toList(), nextCursor);
     }
 
     private static Scope parseScope(String value) {
@@ -114,7 +122,7 @@ public class MyRoomsService {
         return byTime != 0 ? byTime : a.roomId().compareTo(b.roomId());
     };
 
-    private record Entry(Key key, MyRoomSummary summary) {
+    private record Entry(Key key, MyRoomRow row) {
 
         static Entry of(MyRoomRow row, Instant now, LocalDate today) {
             boolean past = row.phase() == RoomPhase.ENDED
@@ -125,10 +133,13 @@ public class MyRoomsService {
                     : (row.meetingAt() != null ? row.meetingAt() : startOfDay(row.startsOn()));
             Key key = new Key(past ? PAST : UPCOMING, ChronoUnit.MICROS.between(Instant.EPOCH, sortTime),
                     row.roomId().toString());
-            MyRoomSummary summary = new MyRoomSummary(row.roomId(), row.title(),
+            return new Entry(key, row);
+        }
+
+        MyRoomSummary summary(List<ParticipantProfile> members) {
+            return new MyRoomSummary(row.roomId(), row.title(),
                     new DateRange(row.startsOn(), row.endsOn()), row.capacity(), row.joinedCount(), row.phase(),
-                    row.meetingAt(), row.endsAt());
-            return new Entry(key, summary);
+                    row.meetingAt(), row.endsAt(), members);
         }
 
         private static Instant startOfDay(LocalDate date) {

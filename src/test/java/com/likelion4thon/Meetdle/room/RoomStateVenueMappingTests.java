@@ -61,6 +61,8 @@ class RoomStateVenueMappingTests {
     @Test
     void mapsRegistrationIntoProgressAndNamedCompletion() throws Exception {
         jdbc.update("UPDATE room SET phase = 'PLACE_SUBMISSION_OPEN' WHERE room_id = ?", RoomStateApiTests.ROOM);
+        jdbc.update("UPDATE app_user SET profile_image_url = 'https://example.com/host.jpg' WHERE user_id = ?",
+                BoundaryFixtures.HOST.userId().toString());
         UUID hostPid = UUID.fromString(RoomStateApiTests.HOST_PID);
         when(venueStateReader.project(any())).thenReturn(new VenueState(
                 new Registration(1, Instant.parse("2030-01-01T05:00:00Z"), null,
@@ -78,6 +80,8 @@ class RoomStateVenueMappingTests {
                 .andExpect(jsonPath("$.registration.progress.capacity").value(4))
                 .andExpect(jsonPath("$.registration.completion[0].nickname").value("방장"))
                 .andExpect(jsonPath("$.registration.completion[0].completed").value(true))
+                .andExpect(jsonPath("$.registration.completion[0].participantId").value(RoomStateApiTests.HOST_PID))
+                .andExpect(jsonPath("$.registration.completion[0].profileImageUrl").value("https://example.com/host.jpg"))
                 .andExpect(jsonPath("$.registration.completion[1].completed").value(false))
                 .andExpect(jsonPath("$.registration.myCompleted").value(false))
                 .andExpect(jsonPath("$.registration.categories[0].category").value("FOOD"))

@@ -40,7 +40,7 @@ public class InvitationController {
      * ⚠️ 운영에서는 창환님 SecurityConfiguration에서 이 경로를 permitAll로 열어줘야 한다.
      */
     @Operation(summary = "초대 링크 미리보기",
-            description = "초대 URL의 토큰으로 방 제목과 초대 상태 조회",
+            description = "초대 URL의 토큰으로 방 제목·초대 상태·현재 참여자의 ID·닉네임·프로필 사진 조회",
             responses = {
                 @ApiResponse(responseCode = "200", description = "초대 미리보기 반환", useReturnTypeSchema = true)
             })
@@ -51,9 +51,9 @@ public class InvitationController {
         return invitationService.preview(token, user == null ? null : user.userId());
     }
 
-    /** A25 POST /api/invitations/resolve — 로그인 필요. 본문: {"code":"K7P2QX","inviteToken":"(선택)"} */
-    @Operation(summary = "초대 코드 확인",
-            description = "로그인 후 초대 코드를 확인하고 방 참여에 사용할 joinProof 발급",
+    /** A25 POST /api/invitations/resolve — 로그인 필요. code 또는 inviteToken 중 하나 이상. */
+    @Operation(summary = "초대 코드 또는 링크 토큰 확인",
+            description = "code 또는 inviteToken만으로 검증 후 joinProof와 현재 참여자 프로필을 포함한 preview 반환. 둘 다 보내면 같은 초대인지 확인",
             parameters = @Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true,
                     description = "같은 로그인 세션에서 GET /api/me로 받은 csrfToken 사용"),
             responses = {

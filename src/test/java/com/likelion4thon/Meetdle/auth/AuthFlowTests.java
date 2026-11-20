@@ -13,6 +13,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.likelion4thon.Meetdle.auth.kakao.KakaoClient;
 import java.net.URI;
 import java.util.UUID;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +24,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -34,8 +36,29 @@ class AuthFlowTests {
     @Autowired
     MockMvc mvc;
 
+    @Autowired
+    JdbcTemplate jdbc;
+
     @MockitoBean
     KakaoClient kakao;
+
+    @Test
+    void updatesStoredPhotoOnLoginAndReturnsNullWhenKakaoHasNoPhoto() throws Exception {
+        var session = new MockHttpSession();
+        String providerId = UUID.randomUUID().toString();
+        for (String image : new String[] {"https://example.com/first.jpg", "https://example.com/updated.jpg", null}) {
+            String state = start(session, null);
+            when(kakao.profile("photo-code")).thenReturn(new KakaoClient.Profile(providerId, "사진 사용자", image));
+            mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", state).param("code", "photo-code"))
+                    .andExpect(status().isFound());
+            String body = mvc.perform(get("/api/me").session(session)).andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(JsonPath.<Map<String, Object>>read(body, "$.user"))
+                    .containsEntry("nickname", "사진 사용자").containsEntry("profileImageUrl", image);
+            assertThat(jdbc.queryForObject("SELECT profile_image_url FROM app_user WHERE provider = 'KAKAO' AND provider_user_id = ?",
+                    String.class, providerId)).isEqualTo(image);
+        }
+    }
 
     @Test
     void exposesHealthWithoutAuthentication() throws Exception {

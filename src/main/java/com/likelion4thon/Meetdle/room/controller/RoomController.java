@@ -109,7 +109,7 @@ public class RoomController {
      * 예: /api/rooms?scope=UPCOMING&limit=10 → 다가오는 약속 10개 + 다음 페이지 커서
      */
     @Operation(summary = "내 약속 방 목록 조회",
-            description = "내가 참여한 방을 날짜 범위로 조회. 다음 페이지는 응답의 nextCursor를 같은 scope와 함께 전달",
+            description = "내가 참여한 방과 각 방의 현재 참여자 프로필 조회. 다음 페이지는 응답의 nextCursor를 같은 scope와 함께 전달",
             responses = {
                 @ApiResponse(responseCode = "200", description = "방 목록과 다음 페이지 커서 반환", useReturnTypeSchema = true)
             })

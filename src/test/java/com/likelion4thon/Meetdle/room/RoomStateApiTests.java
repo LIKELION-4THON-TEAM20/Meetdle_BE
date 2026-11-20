@@ -73,6 +73,19 @@ class RoomStateApiTests {
     }
 
     @Test
+    void membersExposeCurrentNicknamesAndNullableProfileImages() throws Exception {
+        jdbc.update("UPDATE app_user SET nickname = ?, profile_image_url = ? WHERE user_id = ?",
+                "현재 방장 이름", "https://example.com/host.jpg", HOST.userId().toString());
+        String body = state(MEMBER, ROOM).andExpect(status().isOk())
+                .andExpect(jsonPath("$.members[0].participantId").value(HOST_PID))
+                .andExpect(jsonPath("$.members[0].nickname").value("현재 방장 이름"))
+                .andExpect(jsonPath("$.members[0].profileImageUrl").value("https://example.com/host.jpg"))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(JsonPath.<java.util.Map<String, Object>>read(body, "$.members[1]"))
+                .containsEntry("profileImageUrl", null);
+    }
+
+    @Test
     void newRoomShowsInviteOnlyToHost() throws Exception {
         String created = mockMvc.perform(post("/api/rooms")
                         .with(authentication(new TestingAuthenticationToken(HOST, null, "ROLE_USER")))

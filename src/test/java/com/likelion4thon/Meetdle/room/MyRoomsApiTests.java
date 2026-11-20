@@ -12,6 +12,9 @@ import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.BoundaryFixtures;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,6 +73,44 @@ class MyRoomsApiTests {
         room(PAST_1, "2029-12-20", "2029-12-22", "WAITING_FOR_DEPARTURE", true);
         room(PAST_2, "2029-12-25", "2029-12-26", "OPTIONS_READY", true);
         room(OTHER, "2030-01-10", "2030-01-12", "WAITING_FOR_DEPARTURE", false);
+    }
+
+    @Test
+    void summariesContainOnlyTheirRoomsCurrentParticipantProfiles() throws Exception {
+        jdbc.update("UPDATE app_user SET nickname = ?, profile_image_url = ? WHERE user_id = ?",
+                "현재 방장 이름", "https://example.com/host.jpg", BoundaryFixtures.HOST.userId().toString());
+        jdbc.update("UPDATE app_user SET profile_image_url = ? WHERE user_id = ?",
+                "https://example.com/member.jpg", PARTICIPANT.userId().toString());
+        UUID extraParticipant = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO room_member (participant_id, room_id, user_id, nickname, role, joined_at)
+                VALUES (?, ?, ?, '참가자', 'MEMBER', '2030-01-01 00:00:01')
+                """, extraParticipant.toString(), UP_A, PARTICIPANT.userId().toString());
+        String body = list("limit=3").andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].members.length()").value(3))
+                .andExpect(jsonPath("$.items[0].members[0].participantId").value(RoomStateApiTests.HOST_PID))
+                .andExpect(jsonPath("$.items[0].members[0].nickname").value("현재 방장 이름"))
+                .andExpect(jsonPath("$.items[0].members[0].profileImageUrl").value("https://example.com/host.jpg"))
+                .andExpect(jsonPath("$.items[0].members[1].profileImageUrl").value("https://example.com/member.jpg"))
+                .andExpect(jsonPath("$.items[1].members.length()").value(2))
+                .andExpect(jsonPath("$.items[2].members.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        var members = JsonPath.<List<Map<String, Object>>>read(body, "$.items[0].members");
+        assertThat(members).allSatisfy(member -> assertThat(member.keySet())
+                .isEqualTo(Set.of("participantId", "nickname", "profileImageUrl")));
+        assertThat(members.get(2)).containsEntry("profileImageUrl", null);
+        assertThat(JsonPath.<List<Map<String, Object>>>read(body, "$.items[1].members"))
+                .anySatisfy(member -> assertThat(member).containsEntry("participantId", extraParticipant.toString()));
+    }
+
+    @Test
+    void userWithoutRoomsGetsAnEmptyList() throws Exception {
+        UUID userId = UUID.randomUUID();
+        jdbc.update("INSERT INTO app_user (user_id, provider, provider_user_id, nickname) VALUES (?, 'KAKAO', ?, '새 사용자')",
+                userId.toString(), userId.toString());
+        list("", new AuthenticatedUser(userId, "새 사용자"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty())
+                .andExpect(jsonPath("$.nextCursor").isEmpty());
     }
 
     @Test

@@ -60,9 +60,9 @@ public class RoomService {
         JoinGrant grant = joinProofStore.find(session, joinProof)
                 .filter(g -> g.userId().equals(user.userId()) && g.roomId().equals(roomId))
                 .orElseThrow(() -> ApiException.of(HttpStatus.NOT_FOUND, "INVALID_INVITATION",
-                        "가입 증표가 올바르지 않아요. 초대 코드를 다시 입력해 주세요."));
+                        "가입 증표가 올바르지 않아요. 초대 링크 또는 코드를 다시 확인해 주세요."));
         if (grant.isExpiredAt(clock.instant())) {
-            throw ApiException.of(HttpStatus.GONE, "INVITATION_EXPIRED", "가입 증표 시간이 지났어요. 코드를 다시 입력해 주세요.");
+            throw ApiException.of(HttpStatus.GONE, "INVITATION_EXPIRED", "가입 증표 시간이 지났어요. 초대 링크 또는 코드를 다시 확인해 주세요.");
         }
 
         LockedRoomRow room = roomRepository.lockRoom(roomId)

@@ -7,6 +7,7 @@ import com.likelion4thon.Meetdle.room.domain.MyRoomRow;
 import com.likelion4thon.Meetdle.room.domain.NewRoom;
 import com.likelion4thon.Meetdle.room.domain.NewRoomMember;
 import com.likelion4thon.Meetdle.room.domain.RoomPreviewRow;
+import com.likelion4thon.Meetdle.room.domain.RoomMemberProfileRow;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -49,7 +50,7 @@ public class RoomRepository {
     public Optional<RoomPreviewRow> findPreview(UUID roomId) {
         return jdbc.sql("""
                         SELECT r.room_id, r.title, r.starts_on, r.ends_on, r.capacity, r.join_closed_at,
-                               (SELECT m.nickname FROM room_member m
+                               (SELECT u.nickname FROM room_member m JOIN app_user u ON u.user_id = m.user_id
                                  WHERE m.room_id = r.room_id AND m.role = 'HOST') AS host_nickname,
                                (SELECT COUNT(*) FROM room_member m WHERE m.room_id = r.room_id) AS joined_count
                           FROM room r
@@ -229,6 +230,26 @@ public class RoomRepository {
                         toInstant(rs.getObject("inputs_closed_at", LocalDateTime.class)),
                         toInstant(rs.getObject("started_at", LocalDateTime.class))))
                 .optional();
+    }
+
+    /** 초대 미리보기·홈 카드용 프로필. 현재 페이지의 방들을 한 쿼리로 조회한다. */
+    public List<RoomMemberProfileRow> findMemberProfiles(List<UUID> roomIds) {
+        if (roomIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                        SELECT m.room_id, m.participant_id, u.nickname, u.profile_image_url
+                          FROM room_member m
+                          JOIN app_user u ON u.user_id = m.user_id
+                         WHERE m.room_id IN (:roomIds)
+                         ORDER BY m.room_id, m.joined_at, m.participant_id
+                        """)
+                .param("roomIds", roomIds.stream().map(UUID::toString).toList())
+                .query((rs, rowNum) -> new RoomMemberProfileRow(
+                        UUID.fromString(rs.getString("room_id")),
+                        UUID.fromString(rs.getString("participant_id")),
+                        rs.getString("nickname"), rs.getString("profile_image_url")))
+                .list();
     }
 
     /** A08 회원 목록 + 각자 입력 완료 여부. 들어온 순서대로. 예: [방장(완료), 참가자(입력 중)] */
