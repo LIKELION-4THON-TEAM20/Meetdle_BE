@@ -12,16 +12,22 @@ import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.time.Instant;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -32,26 +38,27 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.util.WebUtils;
 
 @Tag(name = "인증")
 @RestController
 class AuthController {
-    private static final String ATTEMPT = AuthController.class.getName() + ".attempt";
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
     private final SecureRandom random = new SecureRandom();
     private final KakaoClient kakao;
     private final JdbcTemplate jdbc;
     private final SecurityContextRepository contexts;
     private final HttpSessionCsrfTokenRepository csrfTokens;
     private final FrontendOrigins frontendOrigins;
+    private final OAuthAttempts attempts;
 
     AuthController(KakaoClient kakao, JdbcTemplate jdbc, SecurityContextRepository contexts,
-                   HttpSessionCsrfTokenRepository csrfTokens, FrontendOrigins frontendOrigins) {
+                   HttpSessionCsrfTokenRepository csrfTokens, FrontendOrigins frontendOrigins, OAuthAttempts attempts) {
         this.kakao = kakao;
         this.jdbc = jdbc;
         this.contexts = contexts;
         this.csrfTokens = csrfTokens;
         this.frontendOrigins = frontendOrigins;
+        this.attempts = attempts;
     }
 
     @Operation(summary = "카카오 로그인 시작",
@@ -88,10 +95,9 @@ class AuthController {
             path = returnTo;
         }
         String origin = returnOrigin == null ? frontendOrigins.defaultOrigin() : returnOrigin;
-        var session = request.getSession();
-        synchronized (WebUtils.getSessionMutex(session)) {
-            session.setAttribute(ATTEMPT, new Attempt(state, origin, path, Instant.now().plusSeconds(300)));
-        }
+        attempts.save(request.getSession(), state, origin, path);
+        log.info("oauth_state_started requestId={} stateRef={} kakaoInApp={}",
+                RequestOperationLog.currentRequestId(), stateReference(state), kakaoInApp(request));
         return redirect(kakao.authorize(state));
     }
 
@@ -109,19 +115,15 @@ class AuthController {
                                @Parameter(description = "카카오 로그인 취소 또는 실패 시 전달되는 오류 코드", example = "access_denied")
             @RequestParam(required = false) String error,
                                HttpServletRequest request, HttpServletResponse response) {
-        var session = request.getSession(false);
-        if (session == null) {
+        var verification = attempts.consume(request.getSession(false), state);
+        log.info("oauth_state_checked requestId={} stateRef={} kakaoInApp={} outcome={} requestedSessionIdPresent={} requestedSessionIdValid={}",
+                RequestOperationLog.currentRequestId(), stateReference(state), kakaoInApp(request),
+                verification.failure() == null ? "ACCEPTED" : verification.failure().name(),
+                request.getRequestedSessionId() != null, request.isRequestedSessionIdValid());
+        if (verification.attempt() == null) {
             return invalidState(request);
         }
-        Attempt attempt;
-        synchronized (WebUtils.getSessionMutex(session)) {
-            if (!(session.getAttribute(ATTEMPT) instanceof Attempt pending)
-                    || !pending.state().equals(state) || !Instant.now().isBefore(pending.expiresAt())) {
-                return invalidState(request);
-            }
-            attempt = pending;
-            session.removeAttribute(ATTEMPT);
-        }
+        var attempt = verification.attempt();
         String destination = attempt.origin() + attempt.path();
         if ((code == null) == (error == null) || (code != null && code.isBlank())
                 || (error != null && error.isBlank())) {
@@ -187,6 +189,24 @@ class AuthController {
         return error(request, 400, "OAUTH_STATE_INVALID", "Invalid or expired OAuth state");
     }
 
+    private static boolean kakaoInApp(HttpServletRequest request) {
+        String agent = request.getHeader("User-Agent");
+        return agent != null && agent.toUpperCase(Locale.ROOT).contains("KAKAOTALK");
+    }
+
+    /** Correlates start and callback without recording the usable state, code or session cookie. */
+    private static String stateReference(String state) {
+        if (state == null || state.isBlank()) {
+            return "-";
+        }
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(state.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash, 0, 16);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
     private static ResponseEntity<?> error(HttpServletRequest request, int status, String code, String message) {
         RequestOperationLog.setResultCode(request, code);
         return ResponseEntity.status(status).cacheControl(CacheControl.noStore())
@@ -197,7 +217,6 @@ class AuthController {
         return ResponseEntity.status(302).location(location).cacheControl(CacheControl.noStore()).build();
     }
 
-    private record Attempt(String state, String origin, String path, Instant expiresAt) {}
     private record Session(
             @Schema(description = "현재 세션으로 로그인한 사용자 정보") AuthenticatedUser user,
             @Schema(description = "같은 세션의 쓰기 요청에서 X-CSRF-TOKEN 헤더로 보낼 값") String csrfToken

@@ -61,6 +61,57 @@ class AuthFlowTests {
     }
 
     @Test
+    void keepsBothLoginAttemptsAndTheirReturnPathsInTheSameSession() throws Exception {
+        var session = new MockHttpSession();
+        String invite = "b".repeat(43);
+        String first = start(session, invite);
+        String second = start(session, null);
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", first).param("error", "access_denied"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "http://localhost:5173/invite/" + invite + "?loginError=CANCELLED"));
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", second).param("error", "access_denied"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "http://localhost:5173/rooms?loginError=CANCELLED"));
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", first).param("error", "access_denied"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("OAUTH_STATE_INVALID"));
+    }
+
+    @Test
+    void keepsOtherPendingAttemptsWhenSuccessfulLoginRotatesSessionId() throws Exception {
+        var session = new MockHttpSession();
+        String oldId = session.getId();
+        String first = start(session, null);
+        String second = start(session, null);
+        when(kakao.profile("rotation-code")).thenReturn(new KakaoClient.Profile(UUID.randomUUID().toString(), "사용자"));
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", first).param("code", "rotation-code"))
+                .andExpect(status().isFound());
+        assertNotEquals(oldId, session.getId());
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", second).param("error", "access_denied"))
+                .andExpect(status().isFound());
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void reportsStateFailureReasonsWithoutLoggingCredentials(CapturedOutput output) throws Exception {
+        var session = new MockHttpSession(null, "secret-session-cookie-value");
+        String state = start(session, null, "Mozilla/5.0 iPhone KAKAOTALK/10.8.2 (INAPP)");
+        String wrongState = "secret-wrong-state";
+        String code = "secret-authorization-code";
+        mvc.perform(get("/api/auth/kakao/callback").param("state", state).param("code", code))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", wrongState).param("code", code))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/auth/kakao/callback").session(session).param("state", state).param("error", "access_denied"))
+                .andExpect(status().isFound());
+        assertThat(output.getOut()).contains("outcome=NO_SESSION", "outcome=STATE_NOT_FOUND", "outcome=ACCEPTED")
+                .doesNotContain(state, wrongState, code, session.getId());
+        var reference = java.util.regex.Pattern.compile("oauth_state_started.*stateRef=([0-9a-f]{32}) kakaoInApp=true")
+                .matcher(output.getOut());
+        assertThat(reference.find()).isTrue();
+        assertThat(output.getOut()).contains("stateRef=" + reference.group(1) + " kakaoInApp=false outcome=NO_SESSION");
+    }
+
+    @Test
     void exposesHealthWithoutAuthentication() throws Exception {
         mvc.perform(get("/api/health"))
                 .andExpect(status().isOk())
@@ -150,10 +201,14 @@ class AuthFlowTests {
     }
 
     private String start(MockHttpSession session, String invite) throws Exception {
+        return start(session, invite, "test-browser");
+    }
+
+    private String start(MockHttpSession session, String invite, String userAgent) throws Exception {
         when(kakao.configured()).thenReturn(true);
         when(kakao.authorize(org.mockito.ArgumentMatchers.anyString())).thenAnswer(invocation ->
                 URI.create("https://kauth.kakao.com/oauth/authorize?state=" + invocation.getArgument(0)));
-        var request = get("/api/auth/kakao/start").session(session);
+        var request = get("/api/auth/kakao/start").session(session).header("User-Agent", userAgent);
         if (invite != null) {
             request.param("inviteToken", invite);
         }
