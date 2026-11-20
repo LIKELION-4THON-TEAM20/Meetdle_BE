@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpSession;
@@ -77,5 +78,18 @@ class OAuthAttemptsTests {
         for (int i = 1; i < 9; i++) {
             assertThat(attempts.consume(session, "state-" + i).attempt()).isNotNull();
         }
+    }
+
+    @Test
+    void bindsPhotoConsentToItsStartingUserWithoutChangingLoginAttempts() {
+        UUID userId = UUID.randomUUID();
+        attempts.save(session, "login-state", "https://meetdle.co.kr", "/rooms");
+        attempts.savePhotoConsent(session, "photo-state", "https://meetdle.co.kr", "/rooms", userId);
+        var photo = attempts.consume(session, "photo-state").attempt();
+        assertThat(photo.purpose()).isEqualTo(OAuthAttempts.Purpose.PHOTO_CONSENT);
+        assertThat(photo.userId()).isEqualTo(userId);
+        var login = attempts.consume(session, "login-state").attempt();
+        assertThat(login.purpose()).isEqualTo(OAuthAttempts.Purpose.LOGIN);
+        assertThat(login.userId()).isNull();
     }
 }

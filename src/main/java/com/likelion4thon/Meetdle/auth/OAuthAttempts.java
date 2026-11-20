@@ -6,6 +6,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.WebUtils;
 
@@ -21,6 +23,14 @@ class OAuthAttempts {
     }
 
     void save(HttpSession session, String state, String origin, String path) {
+        save(session, state, origin, path, Purpose.LOGIN, null);
+    }
+
+    void savePhotoConsent(HttpSession session, String state, String origin, String path, UUID userId) {
+        save(session, state, origin, path, Purpose.PHOTO_CONSENT, Objects.requireNonNull(userId));
+    }
+
+    private void save(HttpSession session, String state, String origin, String path, Purpose purpose, UUID userId) {
         synchronized (WebUtils.getSessionMutex(session)) {
             var attempts = pending(session);
             Instant now = clock.instant();
@@ -28,7 +38,7 @@ class OAuthAttempts {
             while (attempts.size() >= MAX_PENDING) {
                 attempts.remove(attempts.keySet().iterator().next());
             }
-            attempts.put(state, new Attempt(origin, path, now.plusSeconds(300)));
+            attempts.put(state, new Attempt(origin, path, now.plusSeconds(300), purpose, userId));
             session.setAttribute(ATTRIBUTE, new Pending(attempts));
         }
     }
@@ -68,8 +78,9 @@ class OAuthAttempts {
     }
 
     enum Failure { NO_SESSION, MISSING_STATE, NO_PENDING_ATTEMPT, STATE_NOT_FOUND, EXPIRED }
+    enum Purpose { LOGIN, PHOTO_CONSENT }
 
     record Verification(Attempt attempt, Failure failure) {}
-    record Attempt(String origin, String path, Instant expiresAt) implements Serializable {}
+    record Attempt(String origin, String path, Instant expiresAt, Purpose purpose, UUID userId) implements Serializable {}
     private record Pending(Map<String, Attempt> attempts) implements Serializable {}
 }

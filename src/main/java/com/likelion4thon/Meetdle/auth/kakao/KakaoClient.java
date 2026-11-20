@@ -57,12 +57,23 @@ public class KakaoClient {
     }
 
     public URI authorize(String state) {
-        return UriComponentsBuilder.fromUriString(AUTH + "/oauth/authorize")
+        return authorize(state, false);
+    }
+
+    public URI authorizePhotoConsent(String state) {
+        return authorize(state, true);
+    }
+
+    private URI authorize(String state, boolean photoConsent) {
+        var builder = UriComponentsBuilder.fromUriString(AUTH + "/oauth/authorize")
                 .queryParam("response_type", "code")
                 .queryParam("client_id", "{key}")
                 .queryParam("redirect_uri", "{redirect}")
-                .queryParam("state", "{state}")
-                .encode().buildAndExpand(key, redirectUri, state).toUri();
+                .queryParam("state", "{state}");
+        if (photoConsent) {
+            builder.queryParam("scope", "profile_image");
+        }
+        return builder.encode().buildAndExpand(key, redirectUri, state).toUri();
     }
 
     public Profile profile(String code) {
@@ -96,9 +107,9 @@ public class KakaoClient {
         }
         int length = Math.min(100, nickname.codePointCount(0, nickname.length()));
         String imageUrl = null;
+        // 기본 이미지도 카카오가 제공한 사진 URL이 있으면 저장한다.
         if (user.get("kakao_account") instanceof Map<?, ?> account
                 && account.get("profile") instanceof Map<?, ?> profile
-                && !Boolean.TRUE.equals(profile.get("is_default_image"))
                 && profile.get("profile_image_url") instanceof String image) {
             imageUrl = secureImageUrl(image);
         }
@@ -108,7 +119,6 @@ public class KakaoClient {
         PhotoOutcome outcome = imageUrl != null ? PhotoOutcome.AVAILABLE
                 : !(user.get("kakao_account") instanceof Map<?, ?>) ? PhotoOutcome.ACCOUNT_MISSING
                 : !(account.get("profile") instanceof Map<?, ?>) ? PhotoOutcome.PROFILE_MISSING
-                : Boolean.TRUE.equals(profile.get("is_default_image")) ? PhotoOutcome.DEFAULT_IMAGE
                 : !(rawImage instanceof String image) || image.isBlank() ? PhotoOutcome.URL_MISSING
                 : PhotoOutcome.URL_REJECTED;
         FeatureLog.info(Event.KAKAO_PROFILE_PARSED, null, Map.of(
@@ -147,7 +157,7 @@ public class KakaoClient {
     }
 
     private enum ImageScheme { NONE, HTTP, HTTPS, OTHER }
-    private enum PhotoOutcome { AVAILABLE, ACCOUNT_MISSING, PROFILE_MISSING, DEFAULT_IMAGE, URL_MISSING, URL_REJECTED }
+    private enum PhotoOutcome { AVAILABLE, ACCOUNT_MISSING, PROFILE_MISSING, URL_MISSING, URL_REJECTED }
 
     /**
      * 카카오는 사진 주소를 http://로 줄 때가 있어서, https 페이지에서 쓸 수 있게 https://로 바꾼다.

@@ -66,7 +66,7 @@ class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**",
                                 "/v3/api-docs", "/v3/api-docs/swagger-config", "/v3/api-docs.yaml").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/health", "/api/invitations/*").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/me", "/api/rooms", "/api/rooms/*/state",
+                        .requestMatchers(HttpMethod.GET, "/api/auth/kakao/photo-consent", "/api/me", "/api/rooms", "/api/rooms/*/state",
                                 "/api/stations").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/rooms", "/api/rooms/*/join",
                                 "/api/invitations/resolve", "/api/rooms/*/planning-options").authenticated()

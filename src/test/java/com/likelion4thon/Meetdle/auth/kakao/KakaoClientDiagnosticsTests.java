@@ -49,15 +49,26 @@ class KakaoClientDiagnosticsTests {
     }
 
     @Test
-    void explainsDefaultPhotoExclusion(CapturedOutput output) {
+    void acceptsDefaultPhotoAndConvertsItsHttpUrlWithoutLoggingIt(CapturedOutput output) {
         profile("""
-                {"id":12345,"kakao_account":{"profile":{"is_default_image":true,
-                  "profile_image_url":"https://k.kakaocdn.net/private-default.jpg"}}}
+                {"id":12345,"kakao_account":{"profile_image_needs_agreement":false,
+                  "profile":{"is_default_image":true,
+                    "profile_image_url":"http://k.kakaocdn.net/private-default.jpg"}}}
                 """);
+        assertThat(kakao.profile("code").profileImageUrl()).isEqualTo("https://k.kakaocdn.net/private-default.jpg");
+        server.verify();
+        assertThat(output.getOut()).contains("defaultImage=YES", "imageNeedsAgreement=NO", "rawImagePresent=true",
+                "rawImageScheme=HTTP", "parsedImagePresent=true", "outcome=AVAILABLE")
+                .doesNotContain("private-default.jpg", "outcome=DEFAULT_IMAGE");
+    }
+
+    @Test
+    void keepsPhotoNullWhenDefaultFlagIsTrueButUrlIsMissing(CapturedOutput output) {
+        profile("{\"id\":12345,\"kakao_account\":{\"profile\":{\"is_default_image\":true}}}");
         assertThat(kakao.profile("code").profileImageUrl()).isNull();
         server.verify();
-        assertThat(output.getOut()).contains("defaultImage=YES", "rawImagePresent=true",
-                "parsedImagePresent=false", "outcome=DEFAULT_IMAGE").doesNotContain("private-default.jpg");
+        assertThat(output.getOut()).contains("defaultImage=YES", "rawImagePresent=false",
+                "parsedImagePresent=false", "outcome=URL_MISSING").doesNotContain("outcome=DEFAULT_IMAGE");
     }
 
     @Test
