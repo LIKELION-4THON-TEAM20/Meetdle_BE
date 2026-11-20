@@ -1,6 +1,8 @@
 package com.likelion4thon.Meetdle.room.service;
 
 import com.likelion4thon.Meetdle.common.error.ApiException;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.planning.station.StationRepository;
 import com.likelion4thon.Meetdle.planning.station.StationRepository.CatalogStation;
@@ -92,6 +94,8 @@ public class MemberInputService {
                 && Objects.equals(request.destinationStationId(), current.destinationStationId())
                 && slots.equals(currentSlots);
         if (unchanged) {
+            FeatureLog.committed(Event.INPUT_SAVED, roomId, Map.of("participantId", participantId,
+                    "inputRevision", current.inputRevision(), "completed", false, "unchanged", true, "slotCount", slots.size()));
             return toMyInput(current, currentSlots, stations);
         }
 
@@ -102,6 +106,8 @@ public class MemberInputService {
         inputRepository.save(saved);
         inputRepository.replaceSlots(participantId, slots);
         roomRepository.bumpInputVersion(roomId);
+        FeatureLog.committed(Event.INPUT_SAVED, roomId, Map.of("participantId", participantId,
+                "inputRevision", saved.inputRevision(), "completed", request.complete(), "unchanged", false, "slotCount", slots.size()));
         return toMyInput(saved, slots, stations);
     }
 

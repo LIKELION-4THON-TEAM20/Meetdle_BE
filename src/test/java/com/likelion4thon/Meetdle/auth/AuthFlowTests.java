@@ -43,7 +43,8 @@ class AuthFlowTests {
     KakaoClient kakao;
 
     @Test
-    void updatesStoredPhotoOnLoginAndReturnsNullWhenKakaoHasNoPhoto() throws Exception {
+    @ExtendWith(OutputCaptureExtension.class)
+    void updatesStoredPhotoOnLoginAndReturnsNullWhenKakaoHasNoPhoto(CapturedOutput output) throws Exception {
         var session = new MockHttpSession();
         String providerId = UUID.randomUUID().toString();
         for (String image : new String[] {"https://example.com/first.jpg", "https://example.com/updated.jpg", null}) {
@@ -58,6 +59,9 @@ class AuthFlowTests {
             assertThat(jdbc.queryForObject("SELECT profile_image_url FROM app_user WHERE provider = 'KAKAO' AND provider_user_id = ?",
                     String.class, providerId)).isEqualTo(image);
         }
+        assertThat(output.getOut()).contains("event=auth_account_saved", "action=CREATED", "action=UPDATED",
+                        "writtenRows=1", "event=auth_session_created", "event=auth_session_read", "photoPresent=true", "photoPresent=false")
+                .doesNotContain("first.jpg", "updated.jpg", "사진 사용자", "photo-code", providerId);
     }
 
     @Test

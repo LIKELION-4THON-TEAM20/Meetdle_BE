@@ -5,6 +5,8 @@ import com.likelion4thon.Meetdle.common.time.ServiceZone;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.RoomMember.Role;
 import com.likelion4thon.Meetdle.room.RoomOperationLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.domain.NewRoom;
 import com.likelion4thon.Meetdle.room.domain.NewRoomMember;
@@ -26,6 +28,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.Map;
 
 /** 방 관련 업무 규칙을 지키는 주방장. */
 @Service
@@ -68,6 +71,7 @@ public class RoomService {
         LockedRoomRow room = roomRepository.lockRoom(roomId)
                 .orElseThrow(() -> ApiException.of(HttpStatus.NOT_FOUND, "INVALID_INVITATION", "방을 찾을 수 없어요."));
         if (roomRepository.isMember(roomId, user.userId())) {
+            FeatureLog.committed(Event.ROOM_JOINED, roomId, Map.of("userId", user.userId(), "created", false));
             return new JoinResult(new RoomRef(roomId), false);
         }
         if (room.joinClosedAt() != null) {
@@ -78,6 +82,7 @@ public class RoomService {
         }
         roomRepository.insertMember(new NewRoomMember(
                 UUID.randomUUID(), roomId, user.userId(), user.nickname(), Role.MEMBER));
+        FeatureLog.committed(Event.ROOM_JOINED, roomId, Map.of("userId", user.userId(), "created", true));
         return new JoinResult(new RoomRef(roomId), true);
     }
 

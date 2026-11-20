@@ -12,6 +12,8 @@ import com.likelion4thon.Meetdle.planning.options.PlanningOptionsRepository;
 import com.likelion4thon.Meetdle.planning.selection.MeetingSelectionRepository.StoredSelection;
 import com.likelion4thon.Meetdle.planning.selection.dto.SelectMeetingRequest;
 import com.likelion4thon.Meetdle.room.RoomOperationLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.repository.RoomRepository;
 import org.springframework.http.HttpStatus;
@@ -110,6 +112,8 @@ public class MeetingSelectionService {
         if (room.currentSelectionId() != null) {
             StoredSelection current = selectionRepository.find(room.currentSelectionId()).orElseThrow();
             if (current.slotId().equals(request.slotId()) && current.candidateId().equals(request.candidateId())) {
+                FeatureLog.committed(Event.MEETING_SELECTED, roomId, Map.of("selectionId", room.currentSelectionId(),
+                        "reselected", false, "reused", true));
                 return current.meeting();
             }
         }
@@ -120,6 +124,8 @@ public class MeetingSelectionService {
                 request.candidateId(), now);
         roomRepository.confirmSelection(roomId, selectionId, now);
         RoomOperationLog.phaseChanged(roomId, room.phase(), RoomPhase.REGION_CONFIRMED);
+        FeatureLog.committed(Event.MEETING_SELECTED, roomId, Map.of("selectionId", selectionId,
+                "reselected", room.currentSelectionId() != null, "reused", false));
         return selectionRepository.find(selectionId).orElseThrow().meeting();
     }
 

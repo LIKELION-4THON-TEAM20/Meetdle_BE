@@ -24,6 +24,7 @@ public class RequestOperationLog extends OncePerRequestFilter {
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
     private static final String REQUEST_ID = "requestId";
     private static final String RESULT_CODE = RequestOperationLog.class.getName() + ".resultCode";
+    private static final String FAILURE_TYPE = RequestOperationLog.class.getName() + ".failureType";
     private static final String LOGOUT = "/api/auth/logout";
     private static final Logger log = LoggerFactory.getLogger(RequestOperationLog.class);
 
@@ -34,6 +35,10 @@ public class RequestOperationLog extends OncePerRequestFilter {
     public static String currentRequestId() {
         String requestId = MDC.get(REQUEST_ID);
         return requestId == null ? "-" : requestId;
+    }
+
+    public static void setFailureType(HttpServletRequest request, Throwable failure) {
+        request.setAttribute(FAILURE_TYPE, failure.getClass().getSimpleName());
     }
 
     @Override
@@ -61,7 +66,9 @@ public class RequestOperationLog extends OncePerRequestFilter {
                 if (!"-".equals(failureType) && status < 400) {
                     status = 500;
                 }
-                logRequest(request, status, requestId, started, failureType);
+                Object handledFailure = request.getAttribute(FAILURE_TYPE);
+                logRequest(request, status, requestId, started,
+                        "-".equals(failureType) && handledFailure instanceof String type ? type : failureType);
             } finally {
                 if (previousRequestId == null) {
                     MDC.remove(REQUEST_ID);

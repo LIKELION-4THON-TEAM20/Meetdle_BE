@@ -1,5 +1,8 @@
 package com.likelion4thon.Meetdle.venue.local;
 
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Provider;
 import com.likelion4thon.Meetdle.contract.SelectedMeeting.Station;
 import com.likelion4thon.Meetdle.contract.VenueStateReader.Category;
 import com.likelion4thon.Meetdle.contract.VenueStateReader.CategorySetting;
@@ -9,12 +12,15 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class KakaoLocal {
@@ -54,6 +60,13 @@ public class KakaoLocal {
             if (category == Category.CULTURE) {
                 available = fetch(station, category, null, null, radius, 1).meta().total_count() > 0;
             }
+        }
+        var fields = Map.of("category", category, "available", available, "radiusMeters", radius,
+                "expanded", radius > 2500, "required", required);
+        if (available) {
+            FeatureLog.debug(Event.KAKAO_CATEGORY_EVALUATED, null, fields);
+        } else {
+            FeatureLog.info(Event.KAKAO_CATEGORY_EVALUATED, null, fields);
         }
         return new CategorySetting(category, required, available, radius);
     }
@@ -117,6 +130,8 @@ public class KakaoLocal {
 
     private SearchResponse fetch(Station station, Category category, String query, String bounds, int radius, int page) {
         if (key.isBlank()) {
+            FeatureLog.warn(Event.KAKAO_REQUEST_FAILED, null,
+                    Map.of("provider", Provider.KAKAO_LOCAL, "configured", false));
             throw new VenueException(503, "LOCAL_UNAVAILABLE");
         }
         String keyword = category == Category.BAR ? (query == null ? "주점" : query) : query;
@@ -126,6 +141,7 @@ public class KakaoLocal {
             case CULTURE -> "CT1";
             case BAR -> null;
         };
+        long started = System.nanoTime();
         try {
             var result = client.get().uri(builder -> {
                 builder.path(keyword == null ? "/v2/local/search/category.json" : "/v2/local/search/keyword.json")
@@ -149,10 +165,21 @@ public class KakaoLocal {
                 return keyword == null ? builder.build() : builder.build(keyword);
             }).header("Authorization", "KakaoAK " + key).retrieve().body(SearchResponse.class);
             if (result == null || result.meta() == null || result.documents() == null) {
+                FeatureLog.warn(Event.KAKAO_REQUEST_FAILED, null,
+                        Map.of("provider", Provider.KAKAO_LOCAL, "validBody", false));
                 throw new VenueException(503, "LOCAL_UNAVAILABLE");
             }
+            FeatureLog.debug(Event.KAKAO_REQUEST_COMPLETED, null, Map.of("provider", Provider.KAKAO_LOCAL,
+                    "category", category, "namedSearch", query != null, "radiusMeters", radius, "page", page,
+                    "resultCount", result.documents().size(),
+                    "durationMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)));
             return result;
         } catch (RestClientException failure) {
+            FeatureLog.warn(Event.KAKAO_REQUEST_FAILED, null, Map.of("provider", Provider.KAKAO_LOCAL,
+                    "category", category,
+                    "status", failure instanceof RestClientResponseException response ? response.getStatusCode().value() : 0,
+                    "failureType", failure.getClass(),
+                    "durationMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)));
             throw new VenueException(503, "LOCAL_UNAVAILABLE");
         }
     }

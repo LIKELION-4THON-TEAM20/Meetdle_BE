@@ -1,5 +1,8 @@
 package com.likelion4thon.Meetdle.venue;
 
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.CloseReason;
 import io.swagger.v3.oas.annotations.media.Schema;
 import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomMember.Role;
@@ -17,6 +20,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -111,6 +115,10 @@ class PlaceRegistration {
                 INSERT INTO round_member (room_id, round_no, participant_id) VALUES (?, ?, ?)
                 """, members);
         access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+        FeatureLog.committed(Event.REGISTRATION_OPENED, room, Map.of("round", number,
+                "memberCount", members.size(), "categoryCount", settings.size(),
+                "availableCategories", settings.stream().filter(CategorySetting::available).count(),
+                "expandedCategories", settings.stream().filter(setting -> setting.radiusMeters() > 2500).count()));
         return new Opened(number, settings, deadline);
     }
 
@@ -189,6 +197,9 @@ class PlaceRegistration {
 
         int radius = setting.radiusMeters();
         if (!setting.available()) {
+            FeatureLog.debug(Event.PLACE_SEARCHED, room, Map.of("category", category, "round", number,
+                    "radiusMeters", radius, "available", false, "namedSearch", query != null,
+                    "resultCount", 0, "registrableCount", 0));
             return new Search(List.of(), null, radius, radius > 2500, false, 0);
         }
         var results = kakao.search(meeting.station(), category, query == null ? null : query.strip(), bounds, radius, page);
@@ -199,6 +210,10 @@ class PlaceRegistration {
                     snapshot.now().plus(Duration.ofMinutes(15)), found.id(), found.place())) : null;
             return new SearchItem(found.place(), (int) Math.ceil(meters), token, registrable);
         }).toList();
+        FeatureLog.debug(Event.PLACE_SEARCHED, room, Map.of("category", category, "round", number,
+                "radiusMeters", radius, "expanded", radius > 2500, "available", true,
+                "namedSearch", query != null, "page", page, "resultCount", items.size(),
+                "registrableCount", items.stream().filter(SearchItem::registrable).count()));
         return new Search(items, page < 3 && !results.end() ? page + 1 : null, radius, radius > 2500, true, results.totalCount());
     }
 
@@ -247,10 +262,14 @@ class PlaceRegistration {
         if (append) {
             var candidate = store.add(round, participant, pick, snapshot.now());
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+            FeatureLog.committed(Event.NOMINATION_SAVED, room, Map.of("round", round.number(),
+                    "category", category, "participantId", participant, "appended", true));
             return candidate;
         }
         if (store.nominate(round, participant, category, pick, snapshot.now())) {
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+            FeatureLog.committed(Event.NOMINATION_SAVED, room, Map.of("round", round.number(),
+                    "category", category, "participantId", participant, "appended", false, "placeSelected", pick != null));
         }
         return null;
     }
@@ -267,6 +286,8 @@ class PlaceRegistration {
         }
         if (store.remove(round, participant, candidateId)) {
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+            FeatureLog.committed(Event.NOMINATION_REMOVED, room,
+                    Map.of("round", round.number(), "participantId", participant));
         }
     }
 
@@ -295,6 +316,8 @@ class PlaceRegistration {
         } else {
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
         }
+        FeatureLog.committed(Event.REGISTRATION_COMPLETED, room, Map.of("round", round.number(),
+                "participantId", participant, "completedCount", completed.size() + 1));
     }
 
     void closeEarly(UUID room, UUID user, Completion request) {
@@ -370,6 +393,8 @@ class PlaceRegistration {
                         round.room(), round.number());
             }
             access.recordChange(lock, PLACE_SUBMISSION_OPEN);
+            FeatureLog.committed(Event.REGISTRATION_EXTENDED, room, Map.of("round", round.number(),
+                    "mode", request.mode(), "completedCount", completed, "resetCompletion", !mini && missingRequired));
             return new Extended(round.number(), deadline);
         });
     }
@@ -400,6 +425,9 @@ class PlaceRegistration {
                 """, utc(at), reason, round.room(), round.number());
         boolean automatic = store.prepareIfAutomatic(round, lock.snapshot().now());
         access.recordChange(lock, automatic ? RESULT_READY : PLACE_SUBMISSION_CLOSED);
+        FeatureLog.committed(Event.REGISTRATION_CLOSED, lock.snapshot().roomId(), Map.of("round", round.number(),
+                "reason", CloseReason.of(reason), "automaticallySelected", automatic,
+                "nextPhase", automatic ? RESULT_READY : PLACE_SUBMISSION_CLOSED));
     }
 
     static boolean canCloseEarly(int capacity, int complete) {

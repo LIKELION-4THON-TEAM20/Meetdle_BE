@@ -5,6 +5,10 @@ import com.likelion4thon.Meetdle.contract.SelectedMeeting.Station;
 import com.likelion4thon.Meetdle.contract.VenueStateReader.Category;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -12,6 +16,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 class KakaoLocalTests {
     private final Station station = BoundaryFixtures.confirmedVenueRoom().selectedMeeting().orElseThrow().station();
@@ -72,6 +77,19 @@ class KakaoLocalTests {
         assertFalse(setting.available());
         assertEquals(3000, setting.radiusMeters());
         server.verify();
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void logsProviderFailureWithoutSearchTextOrProviderBody(CapturedOutput output) {
+        server.expect(request -> {}).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                .body("private-provider-body private-api-key"));
+        assertThrows(com.likelion4thon.Meetdle.venue.VenueException.class,
+                () -> local.search(station, Category.CAFE, "private-search-query", null, 2500, 1));
+        server.verify();
+        org.assertj.core.api.Assertions.assertThat(output.getOut())
+                .contains("event=kakao_request_failed", "provider=KAKAO_LOCAL", "status=503", "category=CAFE")
+                .doesNotContain("private-search-query", "private-provider-body", "private-api-key");
     }
 
     private static String emptyResponse() {

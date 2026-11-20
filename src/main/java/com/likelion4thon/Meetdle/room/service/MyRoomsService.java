@@ -1,6 +1,8 @@
 package com.likelion4thon.Meetdle.room.service;
 
 import com.likelion4thon.Meetdle.common.error.ApiException;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.common.time.ServiceZone;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.RoomPhase;
@@ -24,6 +26,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -89,6 +92,9 @@ public class MyRoomsService {
                 .stream().collect(Collectors.groupingBy(RoomMemberProfileRow::roomId,
                         Collectors.mapping(member -> new ParticipantProfile(member.participantId(), member.nickname(),
                                 member.profileImageUrl()), Collectors.toList())));
+        FeatureLog.debug(Event.MY_ROOMS_READ, null, Map.of("userId", user.userId(), "scope", scope,
+                "roomCount", page.size(), "hasNextPage", nextCursor != null,
+                "photoCount", profiles.values().stream().flatMap(List::stream).filter(member -> member.profileImageUrl() != null).count()));
         return new MyRoomsPage(page.stream().map(entry -> entry.summary(
                 profiles.getOrDefault(entry.row().roomId(), List.of()))).toList(), nextCursor);
     }

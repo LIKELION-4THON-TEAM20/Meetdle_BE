@@ -1,6 +1,8 @@
 package com.likelion4thon.Meetdle.room.service;
 
 import com.likelion4thon.Meetdle.common.error.ApiException;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.room.domain.InvitationRow;
 import com.likelion4thon.Meetdle.room.domain.RoomPreviewRow;
@@ -25,6 +27,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
+import java.util.Map;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -105,6 +108,10 @@ public class InvitationService {
         limiter.recordSuccess(user.userId());
         InvitePreview preview = previewOf(invitation.roomId(), user.userId());
         IssuedProof proof = joinProofStore.issue(session, user.userId(), invitation, now);
+        FeatureLog.info(Event.INVITATION_RESOLVED, invitation.roomId(), Map.of(
+                "userId", user.userId(), "codeProvided", request.code() != null,
+                "tokenProvided", request.inviteToken() != null, "entryStatus", preview.entryStatus(),
+                "memberCount", preview.joinedCount(), "proofIssued", true));
         return new ResolvedInvite(preview, proof.proof(), proof.expiresAt());
     }
 
@@ -128,11 +135,15 @@ public class InvitationService {
     private InvitePreview previewOf(UUID roomId, UUID viewerUserId) {
         RoomPreviewRow room = roomRepository.findPreview(roomId)
                 .orElseThrow(() -> ApiException.of(HttpStatus.NOT_FOUND, "INVITATION_NOT_FOUND", "초대를 찾을 수 없어요."));
-        return new InvitePreview(room.roomId(), room.title(), new DateRange(room.startsOn(), room.endsOn()),
+        var preview = new InvitePreview(room.roomId(), room.title(), new DateRange(room.startsOn(), room.endsOn()),
                 room.hostNickname(), room.joinedCount(), room.capacity(), entryStatus(room, viewerUserId),
                 roomRepository.findMemberProfiles(List.of(roomId)).stream()
                         .map(member -> new ParticipantProfile(member.participantId(), member.nickname(), member.profileImageUrl()))
                         .toList());
+        FeatureLog.debug(Event.INVITATION_PREVIEW_READ, roomId, Map.of("memberCount", preview.joinedCount(),
+                "photoCount", preview.members().stream().filter(member -> member.profileImageUrl() != null).count(),
+                "entryStatus", preview.entryStatus(), "authenticatedViewer", viewerUserId != null));
+        return preview;
     }
 
     /** 우선순위: 이미 회원 → 가입 마감 → 정원 꽉 참 → 가입 가능. 예: 4명 정원에 4명 → FULL */

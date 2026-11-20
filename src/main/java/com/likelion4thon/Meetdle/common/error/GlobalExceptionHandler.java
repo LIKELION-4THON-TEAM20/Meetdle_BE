@@ -21,6 +21,7 @@ public class GlobalExceptionHandler {
     /** 서비스가 직접 던진 업무 규칙 위반. */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorBody> handleApi(ApiException e, HttpServletRequest request) {
+        RequestOperationLog.setFailureType(request, e);
         RequestOperationLog.setResultCode(request, e.code());
         return ResponseEntity.status(e.status())
                 .body(new ErrorBody(e.code(), e.getMessage(), e.details()));
@@ -29,6 +30,7 @@ public class GlobalExceptionHandler {
     /** @Valid 검사 실패. 예: capacity가 7이면 {"capacity": "2 이상 6 이하여야 합니다"} */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorBody> handleValidation(MethodArgumentNotValidException e, HttpServletRequest request) {
+        RequestOperationLog.setFailureType(request, e);
         RequestOperationLog.setResultCode(request, "INVALID_REQUEST");
         Map<String, Object> details = new LinkedHashMap<>();
         for (FieldError error : e.getBindingResult().getFieldErrors()) {
@@ -42,6 +44,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorBody> handleTypeMismatch(MethodArgumentTypeMismatchException e,
                                                        HttpServletRequest request) {
+        RequestOperationLog.setFailureType(request, e);
         RequestOperationLog.setResultCode(request, "INVALID_REQUEST");
         return ResponseEntity.badRequest()
                 .body(new ErrorBody("INVALID_REQUEST", "요청 값이 올바르지 않아요.",
@@ -50,7 +53,8 @@ public class GlobalExceptionHandler {
 
     /** JSON 문법이 깨졌거나 날짜 형식이 틀린 경우. 예: "from": "11월 20일" */
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ErrorBody> handleUnreadable(HttpServletRequest request) {
+    public ResponseEntity<ErrorBody> handleUnreadable(HttpMessageNotReadableException e, HttpServletRequest request) {
+        RequestOperationLog.setFailureType(request, e);
         RequestOperationLog.setResultCode(request, "INVALID_REQUEST");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ErrorBody.of("INVALID_REQUEST", "요청 본문을 읽을 수 없어요. JSON 형식을 확인해 주세요."));

@@ -14,6 +14,8 @@ import com.likelion4thon.Meetdle.planning.station.StationRepository.CatalogStati
 import com.likelion4thon.Meetdle.planning.subway.SubwayRouter;
 import com.likelion4thon.Meetdle.planning.subway.SubwayRouter.Route;
 import com.likelion4thon.Meetdle.room.RoomOperationLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.room.domain.LockedRoomRow;
 import com.likelion4thon.Meetdle.room.domain.MemberInputRow;
 import com.likelion4thon.Meetdle.room.repository.MemberInputRepository;
@@ -126,6 +128,7 @@ public class PlanningOptionsService {
                 // 예: 버전 3으로 계산해 둔 방에 버전 4로 요청 → 다시 계산하지 않으므로 거절
                 throw staleInput(room);
             }
+            FeatureLog.committed(Event.PLANNING_CALCULATED, roomId, Map.of("inputVersion", inputVersion, "reused", true));
             return new Result(existing.get(), false);
         }
 
@@ -174,6 +177,8 @@ public class PlanningOptionsService {
                 participantIds, slots, picks);
         roomRepository.startPlanning(roomId, now);
         RoomOperationLog.phaseChanged(roomId, room.phase(), RoomPhase.OPTIONS_READY);
+        FeatureLog.committed(Event.PLANNING_CALCULATED, roomId, Map.of("inputVersion", inputVersion,
+                "reused", false, "completedMembers", completed.size(), "slotCount", slots.size(), "regionCount", picks.size()));
         return new Result(optionsRepository.find(roomId).orElseThrow(), true);
     }
 

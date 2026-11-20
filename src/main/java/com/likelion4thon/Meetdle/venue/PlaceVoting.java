@@ -1,5 +1,8 @@
 package com.likelion4thon.Meetdle.venue;
 
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.CloseReason;
 import io.swagger.v3.oas.annotations.media.Schema;
 import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomVenueAccess;
@@ -13,6 +16,7 @@ import com.likelion4thon.Meetdle.venue.RegistrationStore.Round;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -76,6 +80,8 @@ class PlaceVoting {
         }
         results.resolve(round, request.resultRevision(), request.choices(), snapshot.now());
         access.recordChange(lock, RESULT_READY);
+        FeatureLog.committed(Event.TIES_RESOLVED, roomId, Map.of("round", round.number(),
+                "choiceCount", request.choices().size(), "resultRevision", request.resultRevision()));
     }
 
     void reorderVisit(UUID roomId, UUID userId, ReorderVisit request) {
@@ -93,6 +99,8 @@ class PlaceVoting {
         }
         if (results.reorder(round, request.resultRevision(), request.candidateIds())) {
             access.recordChange(lock, snapshot.phase());
+            FeatureLog.committed(Event.VISIT_ORDER_CHANGED, roomId, Map.of("round", round.number(),
+                    "placeCount", request.candidateIds().size(), "resultRevision", request.resultRevision()));
         }
     }
 
@@ -114,6 +122,8 @@ class PlaceVoting {
         results.confirm(round, request.resultRevision(), snapshot.now());
         if (snapshot.phase() != FINAL_PLACE_CONFIRMED) {
             access.recordChange(lock, FINAL_PLACE_CONFIRMED);
+            FeatureLog.committed(Event.RESULT_CONFIRMED, roomId,
+                    Map.of("round", round.number(), "resultRevision", request.resultRevision()));
         }
     }
 
@@ -165,6 +175,7 @@ class PlaceVoting {
                     UPDATE venue_round SET vote_closes_at = ? WHERE room_id = ? AND round_no = ?
                     """, utc(request.closesAt()), round.room(), round.number());
             access.recordChange(lock, VOTING_OPEN);
+            FeatureLog.committed(Event.VOTING_OPENED, room, Map.of("round", round.number()));
             return true;
         });
     }
@@ -209,6 +220,8 @@ class PlaceVoting {
                 WHERE room_id = ? AND round_no = ? AND participant_id = ?
                 """, round.room(), round.number(), participant.toString());
         access.recordChange(lock, VOTING_OPEN);
+        FeatureLog.committed(Event.VOTE_SAVED, room, Map.of("round", round.number(),
+                "participantId", participant, "selectionCount", request.selections().size(), "draftRevision", current.draftRevision() + 1));
         return draft(round, participant);
     }
 
@@ -232,7 +245,10 @@ class PlaceVoting {
         store.jdbc().update("""
                 UPDATE round_member SET submitted_at = ? WHERE room_id = ? AND round_no = ? AND participant_id = ?
                 """, utc(snapshot.now()), round.room(), round.number(), participant.toString());
-        if (submitted(round).size() == snapshot.capacity()) {
+        int submittedCount = submitted(round).size();
+        FeatureLog.committed(Event.VOTE_SUBMITTED, room, Map.of("round", round.number(),
+                "participantId", participant, "submittedCount", submittedCount, "capacity", snapshot.capacity()));
+        if (submittedCount == snapshot.capacity()) {
             tally(access, lock, round, "ALL_SUBMITTED");
         } else {
             access.recordChange(lock, VOTING_OPEN);
@@ -293,6 +309,7 @@ class PlaceVoting {
                 WHERE room_id = ? AND round_no = ?
                 """, utc(deadline), round.room(), round.number());
         access.recordChange(lock, VOTING_OPEN);
+        FeatureLog.committed(Event.VOTING_EXTENDED, snapshot.roomId(), Map.of("round", round.number(), "extensionCount", 1));
     }
 
     PlaceRegistration.Extended recollect(UUID room, UUID user, UUID key, Recollect request) {
@@ -387,6 +404,8 @@ class PlaceVoting {
             setRecovery(round, RecoveryReason.valueOf(reason));
         }
         access.recordChange(lock, next);
+        FeatureLog.committed(Event.VOTING_CLOSED, lock.snapshot().roomId(), Map.of("round", round.number(),
+                "reason", CloseReason.of(reason), "submittedCount", submitted(round).size(), "nextPhase", next));
         events.publishEvent(new VoteClosed(lock.snapshot().roomId(), round.number(), now));
     }
 

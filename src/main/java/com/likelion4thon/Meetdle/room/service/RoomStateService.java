@@ -1,6 +1,8 @@
 package com.likelion4thon.Meetdle.room.service;
 
 import com.likelion4thon.Meetdle.common.error.ApiException;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import com.likelion4thon.Meetdle.contract.MeetingWindow;
 import com.likelion4thon.Meetdle.contract.RoomMember;
@@ -33,6 +35,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -91,6 +94,8 @@ public class RoomStateService {
                 .findFirst()
                 .orElseThrow(() -> ApiException.of(HttpStatus.FORBIDDEN, "FORBIDDEN", "이 방의 회원이 아니에요."));
         boolean host = me.role() == RoomMember.Role.HOST;
+        FeatureLog.debug(Event.ROOM_STATE_READ, roomId, Map.of("userId", user.userId(), "phase", room.phase(),
+                "memberCount", members.size(), "photoCount", members.stream().filter(member -> member.profileImageUrl() != null).count()));
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
         // 2) A 조각

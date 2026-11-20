@@ -8,6 +8,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.likelion4thon.Meetdle.auth.kakao.KakaoClient;
 import com.likelion4thon.Meetdle.common.logging.RequestOperationLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog;
+import com.likelion4thon.Meetdle.common.logging.FeatureLog.Event;
 import com.likelion4thon.Meetdle.contract.AuthenticatedUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -139,6 +141,7 @@ class AuthController {
         try {
             profile = kakao.profile(code);
         } catch (RestClientException | IllegalStateException failure) {
+            RequestOperationLog.setFailureType(request, failure);
             RequestOperationLog.setResultCode(request, "PROVIDER_UNAVAILABLE");
             return redirect(URI.create(destination + "?loginError=PROVIDER_UNAVAILABLE"));
         }
@@ -149,6 +152,8 @@ class AuthController {
         context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(user, null, List.of()));
         SecurityContextHolder.setContext(context);
         contexts.saveContext(context, request, response);
+        FeatureLog.info(Event.AUTH_SESSION_CREATED, null,
+                Map.of("userId", user.userId(), "photoPresent", user.profileImageUrl() != null));
         RequestOperationLog.setResultCode(request, "AUTHENTICATED");
         return redirect(URI.create(destination));
     }
@@ -159,17 +164,25 @@ class AuthController {
                 UUID.fromString(rs.getString("user_id")), rs.getString("nickname")), profile.id());
         if (!users.isEmpty()) {
             var user = users.get(0);
-            jdbc.update("UPDATE app_user SET nickname = ?, profile_image_url = ? WHERE user_id = ?",
+            int written = jdbc.update("UPDATE app_user SET nickname = ?, profile_image_url = ? WHERE user_id = ?",
                     profile.nickname(), profile.profileImageUrl(), user.userId().toString());
+            FeatureLog.info(Event.AUTH_ACCOUNT_SAVED, null, Map.of("userId", user.userId(),
+                    "action", AccountAction.UPDATED, "writtenRows", written, "photoPresent", profile.profileImageUrl() != null));
             return new AuthenticatedUser(user.userId(), profile.nickname(), profile.profileImageUrl());
         }
         UUID userId = UUID.randomUUID();
         try {
-            jdbc.update("INSERT INTO app_user (user_id, provider, provider_user_id, nickname, profile_image_url) VALUES (?, 'KAKAO', ?, ?, ?)",
+            int written = jdbc.update("INSERT INTO app_user (user_id, provider, provider_user_id, nickname, profile_image_url) VALUES (?, 'KAKAO', ?, ?, ?)",
                     userId.toString(), profile.id(), profile.nickname(), profile.profileImageUrl());
+            FeatureLog.info(Event.AUTH_ACCOUNT_SAVED, null, Map.of("userId", userId,
+                    "action", AccountAction.CREATED, "writtenRows", written, "photoPresent", profile.profileImageUrl() != null));
         } catch (DuplicateKeyException conflict) {
-            return jdbc.queryForObject(select, (rs, row) -> new AuthenticatedUser(
+            var user = jdbc.queryForObject(select, (rs, row) -> new AuthenticatedUser(
                     UUID.fromString(rs.getString("user_id")), rs.getString("nickname"), profile.profileImageUrl()), profile.id());
+            FeatureLog.info(Event.AUTH_ACCOUNT_SAVED, null, Map.of("userId", user.userId(),
+                    "action", AccountAction.CONCURRENT_EXISTING, "writtenRows", 0,
+                    "photoPresent", profile.profileImageUrl() != null));
+            return user;
         }
         return new AuthenticatedUser(userId, profile.nickname(), profile.profileImageUrl());
     }
@@ -182,6 +195,8 @@ class AuthController {
     @GetMapping("/api/me")
     ResponseEntity<Session> me(@AuthenticationPrincipal AuthenticatedUser user,
                                @Parameter(hidden = true) CsrfToken csrfToken) {
+        FeatureLog.info(Event.AUTH_SESSION_READ, null,
+                Map.of("userId", user.userId(), "photoPresent", user.profileImageUrl() != null));
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Session(user, csrfToken.getToken()));
     }
 
@@ -216,6 +231,8 @@ class AuthController {
     private static ResponseEntity<Void> redirect(URI location) {
         return ResponseEntity.status(302).location(location).cacheControl(CacheControl.noStore()).build();
     }
+
+    private enum AccountAction { CREATED, UPDATED, CONCURRENT_EXISTING }
 
     private record Session(
             @Schema(description = "현재 세션으로 로그인한 사용자 정보") AuthenticatedUser user,

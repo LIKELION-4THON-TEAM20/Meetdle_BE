@@ -308,6 +308,7 @@ class PlaceRegistrationController {
 
     @ExceptionHandler(VenueException.class)
     ResponseEntity<Map<String, String>> venueError(VenueException failure, HttpServletRequest request) {
+        RequestOperationLog.setFailureType(request, failure);
         RequestOperationLog.setResultCode(request, failure.getMessage());
         return ResponseEntity.status(failure.status).body(Map.of("code", failure.getMessage(), "message",
                 switch (failure.status) {
